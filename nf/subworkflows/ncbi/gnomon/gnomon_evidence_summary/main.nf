@@ -166,10 +166,10 @@ process gpx_qsubmit {
         njobs=16
     """
     echo $scaffolds > scaffolds.mft
-    mkdir -p ./asncache/
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${gn_models} -oseq-ids spids -split-sequences
+    mkdir -p tmp/asncache
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${gn_models} -oseq-ids spids -split-sequences
 
-    gpx_qsubmit $params -ids-manifest scaffolds.mft -o jobs -nogenbank -asn-cache ./asncache/  -keep-input-order
+    gpx_qsubmit $params -ids-manifest scaffolds.mft -o jobs -nogenbank -asn-cache tmp/asncache/  -keep-input-order
     total_lines=\$(wc -l <jobs)
     (( lines_per_file = (total_lines + ${njobs} - 1) / ${njobs} ))
     echo total_lines=\$total_lines, lines_per_file=\$lines_per_file
@@ -181,6 +181,7 @@ process gpx_qsubmit {
         effective_njobs=$njobs
     fi
     split -nr/\$effective_njobs jobs job. -da 3
+    rm -rf tmp
     """
     stub:
         njobs=16
@@ -217,14 +218,14 @@ process gnomon_report {
     else
         threads=16
     fi  
-    mkdir -p asncache
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${gn_models} -oseq-ids spids1 -split-sequences
-    prime_cache -cache ./asncache/ -ifmt asn-seq-entry  -i ${genome_asn} -oseq-ids spids2 -split-sequences
+    mkdir -p tmp/asncache
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${gn_models} -oseq-ids spids1 -split-sequences
+    prime_cache -cache tmp/asncache/ -ifmt asn-seq-entry  -i ${genome_asn} -oseq-ids spids2 -split-sequences
     if [[ -n "${protein_asn}" ]]; then
         if [[ `head -c4 ${protein_asn}` == "Seq-" ]]; then
-            prime_cache -cache ./asncache/ -ifmt asn-seq-entry -i ${protein_asn} -oseq-ids spids3 -split-sequences
+            prime_cache -cache tmp/asncache/ -ifmt asn-seq-entry -i ${protein_asn} -oseq-ids spids3 -split-sequences
         else
-            prime_cache -cache ./asncache/ -ifmt asnb-seq-entry -i ${protein_asn} -oseq-ids spids3 -split-sequences
+            prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry -i ${protein_asn} -oseq-ids spids3 -split-sequences
         fi
     fi
 
@@ -240,13 +241,12 @@ process gnomon_report {
         tail -n +2 \$f >>\${f}_true
         echo "\${f}_true" >> input_slices.mft
     done
-    mkdir -p interim
-    mkdir -p tmp
-    gnomon_report $params -nogenbank -egapx  -input-slices input_slices.mft -asn-cache ./asncache/  -start-job-id \$start_job_id -workers \$threads -input-jobs $jobs -O interim
+    mkdir -p tmp/interim
+    gnomon_report $params -nogenbank -egapx  -input-slices input_slices.mft -asn-cache tmp/asncache/  -start-job-id \$start_job_id -workers \$threads -input-jobs $jobs -O tmp/interim
 
     mkdir -p output
-    cat interim/* > output/gnomon_report.${task.index}.gpx-job.asnb
-    rm -rf interim
+    cat tmp/interim/* > output/gnomon_report.${task.index}.gpx-job.asnb
+    rm -rf tmp
     """
     stub:
     """
@@ -268,16 +268,17 @@ process gnomon_summary {
     script:
     """
     
-    mkdir -p ./asncache/
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${gn_models} -oseq-ids spids2 -split-sequences
-    prime_cache -cache ./asncache/ -ifmt asn-seq-entry  -i ${genome_asn} -oseq-ids spids -split-sequences
+    mkdir -p tmp/asncache
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${gn_models} -oseq-ids spids2 -split-sequences
+    prime_cache -cache tmp/asncache/ -ifmt asn-seq-entry  -i ${genome_asn} -oseq-ids spids -split-sequences
     echo "${gn_models.join('\n')}" > models.mft
-    gnomon_summary -egapx -models models.mft -nogenbank $params  -input $gnomon_report -quality $gnomon_quality_report -asn-cache ./asncache/  -output All.gnomon_evidence_@.txt
+    gnomon_summary -egapx -models models.mft -nogenbank $params  -input $gnomon_report -quality $gnomon_quality_report -asn-cache tmp/asncache/  -output All.gnomon_evidence_@.txt
 
     touch All.gnomon_evidence_bag.txt
     touch All.gnomon_evidence_pair.txt
     touch All.gnomon_evidence_stats.txt
     touch All.gnomon_evidence_taxid.txt
+    rm -rf tmp
     """
     stub:
     """

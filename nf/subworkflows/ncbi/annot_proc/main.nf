@@ -55,6 +55,7 @@ workflow annot_proc_plane {
         //name_from_ortholog 
 
         tax_id          // NCBI tax id of the closest taxon to the genome
+        lineage_taxids  // string of comma seperated ncbi taxids, for the lineage of the genome
         symbol_format_class // string for how to format gene names 
         name_cleanup_rules_file // file with name correction rules
         ortho_files      /// ortho reference input files
@@ -66,7 +67,7 @@ workflow annot_proc_plane {
     main:
         // Post GNOMON
         // might come its own plane     
-        gnomon_biotype(gnomon_models,/*splices_file  -- constant*/ [],  prot_denylist, gencoll_asn, swiss_prot_asn, [], alignments, name_cleanup_rules_file, task_params.get('gnomon_biotype', [:]))
+        gnomon_biotype(gnomon_models,/*splices_file  -- constant*/ [],  prot_denylist, gencoll_asn, swiss_prot_asn, [], alignments, name_cleanup_rules_file, lineage_taxids, task_params.get('gnomon_biotype', [:]))
 
         annot_builder(gencoll_asn, genome_asn, gnomon_models, cmsearch_models, trnascan_models, task_params.get('annot_builder', [:]))
         def accept_ftable_file = annot_builder.out.accept_ftable_annot
@@ -83,14 +84,14 @@ workflow annot_proc_plane {
         
         locus_link(/*best_refseq_prot_hit  -- best protein hits from refseq plane*/ [], orthologs, accept_ftable_file, 
                 gencoll_asn, gnomon_models, best_naming_hits , locus_track.out.track_rpt, /*comparisons*/ [],  /*curr_prev_compare*/ [], 
-                gnomon_biotype.out.biotypes, lxr_data, name_cleanup_rules_file, swiss_prot_asn, name_from_ortholog,  task_params.get('locus_link', [:]))
+                gnomon_biotype.out.biotypes, lxr_data, lineage_taxids, name_cleanup_rules_file, swiss_prot_asn, name_from_ortholog,  task_params.get('locus_link', [:]))
 
         // Replace spaces with underscores in assembly name
         def assembly_name = annotation_name_prefix.replaceAll(' ', '_')
    
         final_asn_markup(assembly_name, gencoll_asn, genome_asn, scaffolds, /*chromosomes ASN*/ [], annot_builder.out.accept_asn.collect(), locus_link.out.locus, locus_link.out.locustypes, task_params.get('final_asn_markup', [:]) )
 
-        generate_fasta_from_annots(gencoll_asn, final_asn_markup.out.to_convert, /*chromosomes ASN*/ [], task_params.get('generate_fasta_from_annots', [:]))
+        generate_fasta_from_annots(gencoll_asn, final_asn_markup.out.to_convert, /*chromosomes ASN*/ [], task_params.get('fasta_from_annots', [:]))
 
         annotwriter(accept_ftable_file, task_params.get('annotwriter', [:]))
 

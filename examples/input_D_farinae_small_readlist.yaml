@@ -2,3 +2,7 @@ genome: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/020/809/275/GCA_020809275.1
 taxid: 6954
 short_reads: path/to/input_D_farinae_small_reads.txt
 locus_tag_prefix: egapxtmp
+cmsearch:
+  enabled: false
+trnascan:
+  enabled: false

@@ -120,20 +120,18 @@ process annot_builder_run {
 
     mkdir -p out/{ACCEPT,COLLECTION,CONFLICT,REPORT,TEST}
     
-    mkdir -p asncache
-    prime_cache -cache ./asncache/ -ifmt asn-seq-entry -i $genome_asn -split-sequences
+    mkdir -p tmp/asncache
+    prime_cache -cache tmp/asncache/ -ifmt asn-seq-entry -i $genome_asn -split-sequences
 
     annot_builder -version
-    annot_builder -accept-output both -nogenbank -asn-cache ./asncache/ -conffile inp/annot_builder.ini -gc-assembly $gencoll_asn -logfile out/annot_builder.log
+    annot_builder -accept-output both -nogenbank -asn-cache tmp/asncache/ -conffile inp/annot_builder.ini -gc-assembly $gencoll_asn -logfile out/annot_builder.log
     
     # NB: don't do this because if there are many files (aberrant assembly with many scaffolds),
     # *-expansion will exceed maximum command-line length. Instead, use find with -exec.
     # cat out/ACCEPT/*.ftable.annot > out/ACCEPT/accept.ftable_annot
 
     find out/ACCEPT -type f -name '*.ftable.annot' -exec cat {} + > out/ACCEPT/accept.ftable_annot
-
-
-    rm -rf ./asncache
+    rm -rf tmp
     """
 
     stub:

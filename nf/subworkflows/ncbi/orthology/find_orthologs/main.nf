@@ -54,12 +54,12 @@ process run_find_orthologs {
     str=""
     if [ -z "$blastdb" ]
     then
-        mkdir -p ./asncache/
-        prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i $ref_proteins_asn  -oseq-ids /dev/null -split-sequences
-        prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i $input_genome_asn  -oseq-ids /dev/null -split-sequences
-        prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i $input_proteins_asn  -oseq-ids /dev/null -split-sequences
-        prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i input/ref_genome.asn  -oseq-ids /dev/null -split-sequences
-        str="-asn-cache ./asncache/  -prot_hits_serial_type Seq-align-set"
+        mkdir -p tmp/asncache
+        prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i $ref_proteins_asn  -oseq-ids /dev/null -split-sequences
+        prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i $input_genome_asn  -oseq-ids /dev/null -split-sequences
+        prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i $input_proteins_asn  -oseq-ids /dev/null -split-sequences
+        prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i input/ref_genome.asn  -oseq-ids /dev/null -split-sequences
+        str="-asn-cache tmp/asncache/  -prot_hits_serial_type Seq-align-set"
     else
         str="-blastdb $blastdb/prot.blastdb,$blastdb/nucl.blastdb -prot_hits_serial_type Seq-align"
     fi
@@ -67,6 +67,7 @@ process run_find_orthologs {
                  \$str  -o_orthologs output/orthologs.rpt   -prot_hits $prot_hits \
                  -o_stats output/stats.xml -nogenbank
 
+    rm -rf tmp
     """
     stub:
     """

@@ -26,16 +26,14 @@ process run_busco {
     input:
         path proteins
         val  lineage
-        path lineage_download
+        path lineage_download, stageAs: 'busco_downloads/lineages/*'
         val  parameters
     output:
         path "output/*", emit: 'results'
     script:
     """
     download_params=''
-    if [ -d "$lineage_download" ]; then
-        mkdir -p busco_downloads/lineages
-        ln -s `readlink -f $lineage_download` busco_downloads/lineages/$lineage
+    if [ -n "$lineage_download" ]; then
         download_params="--download_path busco_downloads --offline"
     fi
 
@@ -45,6 +43,8 @@ process run_busco {
     # which will hit the ulimit (typically 1024). That's on top of nextflow itself using ~200 threads.
     export OPENBLAS_NUM_THREADS=1
 
+    busco --version
+
     if ! busco \$download_params -i $proteins --out output --mode proteins --cpu \$num_threads --lineage_dataset $lineage --tar; then
 
         # if busco errored-out, that's not a fatal failure for the pipeline.
@@ -53,13 +53,11 @@ process run_busco {
         touch output/short_summary.json
         touch output/short_summary.txt
     fi
-
-    # this contains tens of thousands of files, so clean it up.
-    rm -rf busco_downloads 
     """
 
     stub:
     """
+    echo Busco lineage download: $lineage_download
     mkdir -p output
     touch output/short_summary.json
     touch output/short_summary.txt

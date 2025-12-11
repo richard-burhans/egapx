@@ -3,7 +3,7 @@ nextflow.enable.dsl=2
 
 include { merge_params } from '../../utilities'
 
-///netmnt/vast01/gpi/regr/GPIPE_REGR1/system/2024-05-16.prod.build26027/bin/compare_annots 
+//bin/compare_annots 
 //  -q_scope_type ID 
 //  -q_scope_args '' 
 //  -q_ids ./gc_get_molecules.8280202/out/no_organelle.gi 
@@ -14,7 +14,7 @@ include { merge_params } from '../../utilities'
 //  -o_asn ./locus_track_compare.8281472/out/curr_prev.antcmp.asn 
 //  -o_tab ./locus_track_compare.8281472/out/curr_prev.antcmp.tab
 
-///netmnt/vast01/gpi/regr/GPIPE_REGR1/system/2024-05-16.prod.build26027/bin/locus_track 
+//bin/locus_track 
 //   -o_loci      ./locus_track_compare.8281472/out/locus_track.rpt 
 //   -o_conflicts ./locus_track_compare.8281472/out/conflicts.rpt 
 //   -o_evidence  ./locus_track_compare.8281472/out/evidence.rpt 
@@ -53,8 +53,8 @@ process run_locus_track {
     script:
     """
     mkdir -p output
-    ##mkdir -p ./asncache/
-    ##prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ....  -oseq-ids /dev/null -split-sequences
+    ##mkdir -p tmp/asncache/
+    ##prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ....  -oseq-ids /dev/null -split-sequences
     
     echo "${annotation.join('\n')}" > annotation.mft
 

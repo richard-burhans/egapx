@@ -92,16 +92,17 @@ process run_rnaseq_collapse {
     # NB: for successful gather phase all job id should be unique,
     # so we must supply start_job_id.
     (( start_job_id = ((10#\$extension) * $lines_per_file) + 1 ))
-  
+
+    mkdir -p tmp
     # make the local LDS of the genomic sequences
-    lds2_indexer -source ./genome -db ./genome_lds  
+    lds2_indexer -source ./genome -db tmp/genome_lds  
   
-    mkdir -p interim
-    rnaseq_collapse $params -O interim -nogenbank -lds2 ./genome_lds -sorted-vols align.mft -scaffold-list scaffold_list.mft -sra-metadata-manifest metadata.mft -start-job-id \$start_job_id -input-jobs $job -workers \$threads
+    mkdir -p tmp/interim
+    rnaseq_collapse $params -O tmp/interim -nogenbank -lds2 tmp/genome_lds -sorted-vols align.mft -scaffold-list scaffold_list.mft -sra-metadata-manifest metadata.mft -start-job-id \$start_job_id -input-jobs $job -workers \$threads
 
     mkdir -p output
-    cat interim/* > output/rnaseq_collapse.${task.index}.gpx-job.asnb
-    rm -rf interim
+    cat tmp/interim/* > output/rnaseq_collapse.${task.index}.gpx-job.asnb
+    rm -rf tmp
     """
     
     stub:

@@ -61,6 +61,7 @@ workflow egapx {
         def genome = input_params.get('genome', [])
         def proteins = input_params.get('proteins', [])
         def proteins_trusted = input_params.get('proteins_trusted', [])
+        def additional_proteins = input_params.get('additional_proteins', [])
         def short_reads_query = input_params.get('short_reads_query', [])
         def short_reads_ids = input_params.get('short_reads_ids', [])
         def short_reads = input_params.get('short_reads', [])
@@ -71,6 +72,7 @@ workflow egapx {
         def long_reads_metadata = input_params.get('long_reads_metadata', [])
         def organelles = input_params.get('organelles', []) ?: []
         def tax_id = input_params.get('taxid', [])
+        def lineage_taxids = input_params.get('lineage_taxids', [])
         def symbol_format_class = input_params.get('symbol_format_class', [])
         def name_cleanup_rules_file = input_params.get('name_cleanup_rules_file', [])
         def hmm_params = input_params.get('hmm', []) ?: []
@@ -89,7 +91,8 @@ workflow egapx {
         def busco_lineage_download = input_params.get('busco_lineage_download', [])
         def annotation_provider = input_params.get('annotation_provider', []) ?: 'GenBank submitter'
         def annotation_name_prefix = input_params.get('annotation_name_prefix', []) ?: 'EGAPx Test Assembly'
-        def protein_aligner_name = input_params.get('protein_aligner_name', []) ?: 'miniprot'
+        def protein_aligner_name = input_params.get('protein_aligner_name', 'miniprot')
+        def proteins_filter_taxons = input_params.get('proteins_filter_taxons', [])
 
         if (params.verbose) {
             // dump all params as yaml
@@ -117,7 +120,7 @@ workflow egapx {
         def proteins_asnb = []
         if (proteins) {
             // miniprot plane
-            (unpacked_proteins, proteins_asn) = setup_proteins(proteins, task_params.get('setup', [:]))
+            (unpacked_proteins, proteins_asn) = setup_proteins(proteins, proteins_filter_taxons, additional_proteins, task_params.get('setup', [:]))
             target_proteins_plane(unpacked_genome, genome_asn, genome_blastdb, gencoll_asn, unpacked_proteins, proteins_asn, protein_aligner_name, eff_max_intron, task_params)
             protein_alignments = target_proteins_plane.out.protein_alignments
         }
@@ -125,6 +128,8 @@ workflow egapx {
         // RNASeq short alignments
         // def rnaseq_alignments = []
         def star_bam = []
+        sra_exons = []
+        sra_exons_slices = []
         if (short_reads_query || short_reads_ids || short_reads) {
             rnaseq_short_plane(genome_asn, scaffolds, unpacked_genome, short_reads_query, short_reads_ids, short_reads, short_reads_metadata, organelles, tax_id, eff_max_intron, task_params) 
             rnaseq_short_alignments = rnaseq_short_plane.out.rnaseq_alignments
@@ -162,19 +167,19 @@ workflow egapx {
         gnomon_models = gnomon_plane.out.gnomon_models
 
         def cmsearch_annots = []
-        if (params?.tasks?.trnascan?.enabled) {
+        if (params?.tasks?.cmsearch?.enabled) {
             cmsearch_plane(unpacked_genome)
             cmsearch_annots = cmsearch_plane.out.cmsearch_annots
         } else {
-            println("Note: trnascan plane is disabled in params.")
+            println("Note: cmsearch plane is disabled in params.")
         }
 
         def trnascan_annots = []
-        if (params?.tasks?.cmsearch?.enabled) {
+        if (params?.tasks?.trnascan?.enabled) {
             trnascan_plane(unpacked_genome)
             trnascan_annots = trnascan_plane.out.trnascan_annots
         } else {
-            println("Note: cmsearch plane is disabled in params.")
+            println("Note: trnascan plane is disabled in params.")
         }
 
         // outputs 
@@ -187,7 +192,7 @@ workflow egapx {
         def annotation_data_comment_file = []
 
         annot_proc_plane(annotation_name_prefix, gnomon_models, cmsearch_annots, trnascan_annots, gencoll_asn, genome_asn, genome_asnb,
-                         scaffolds, tax_id, symbol_format_class, name_cleanup_rules_file,
+                         scaffolds, tax_id, lineage_taxids, symbol_format_class, name_cleanup_rules_file,
                          ortho_files, gnomon_plane.out.alignments, gnomon_plane.out.best_naming_hits, gnomon_plane.out.swiss_prot_asn, prot_denylist, task_params)
 
         locus_out = annot_proc_plane.out.locus

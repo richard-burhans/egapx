@@ -38,7 +38,8 @@ process rnaseq_divide_by_strandedness {
     mkdir -p tmp
     samtools=\$(which samtools)
     echo "${bam_list.join('\n')}" > bam_list.mft
-    TMPDIR=tmp rnaseq_divide_by_strandedness -align-manifest bam_list.mft -metadata $metadata_file  $parameters  -samtools-executable \$samtools -stranded-output output/stranded.list -strandedness-output output/run.strandedness -unstranded-output output/unstranded.list
+    rnaseq_divide_by_strandedness -work-area tmp -align-manifest bam_list.mft -metadata $metadata_file  $parameters  -samtools-executable \$samtools -stranded-output output/stranded.list -strandedness-output output/run.strandedness -unstranded-output output/unstranded.list
+    rm -rf tmp
     """
     stub:
     """

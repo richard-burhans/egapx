@@ -41,10 +41,10 @@ process gpx_qsubmit {
         njobs=split_count
     """
     echo $seqids > seqids.mft
-    mkdir -p ./asncache/
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids spids -split-sequences
+    mkdir -p tmp/asncache
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids spids -split-sequences
 
-    gpx_qsubmit $params -ids-manifest seqids.mft -o jobs -nogenbank -asn-cache ./asncache/ 
+    gpx_qsubmit $params -ids-manifest seqids.mft -o jobs -nogenbank -asn-cache tmp/asncache/
     total_lines=\$(wc -l <jobs)
     (( lines_per_file = (total_lines + ${njobs} - 1) / ${njobs} ))
     echo total_lines=\$total_lines, lines_per_file=\$lines_per_file
@@ -56,6 +56,7 @@ process gpx_qsubmit {
         effective_njobs=$njobs
     fi
     split -nr/\$effective_njobs jobs job. -da 3
+    rm -rf tmp
     """
     stub:
         njobs=16
@@ -87,16 +88,16 @@ process run_winmask_wnode {
     else
         threads=16
     fi
-    mkdir -p interim
-    mkdir -p asncache
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids spids -split-sequences
+    mkdir -p tmp/interim
+    mkdir -p tmp/asncache
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids spids -split-sequences
     filename=\$(basename -- "$jobs")
     extension="\${filename##*.}"
     (( start_job_id = ((10#\$extension) * $lines_per_file) + 1 ))
-    winmasker_wnode -ustat $winmask_stats -asn-cache ./asncache/ -workers \$threads -start-job-id \$start_job_id -input-jobs $jobs -nogenbank  -O interim $parameters
+    winmasker_wnode -ustat $winmask_stats -asn-cache tmp/asncache/ -workers \$threads -start-job-id \$start_job_id -input-jobs $jobs -nogenbank  -O tmp/interim $parameters
     mkdir -p mask
-    cat interim/* > mask/winmasker_wnode.${task.index}.gpx-job.asnb
-    rm -rf interim
+    cat tmp/interim/* > mask/winmasker_wnode.${task.index}.gpx-job.asnb
+    rm -rf tmp
     """
     stub:
     """

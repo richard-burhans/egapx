@@ -34,19 +34,25 @@ workflow rnaseq_long_plane {
         // Satisfy quirks of Nextflow compiler
         def reads_query1 = reads_query
         def reads_ids1 = reads_ids
-        //
-        def ch_reads = Channel.fromList(reads)
+        def ch_reads = null
+        def reads1 = reads
+        try {
+            ch_reads = Channel.fromList(reads)
+        } catch( Exception e ) {
+            ch_reads = null
+        }
+        def minimap_wnode_params = task_params.get('minimap2_wnode', [:])
         def sra_metadata, sra_run_list
         if (reads_query || reads_ids) {
             def query = reads_query1 ? reads_query1 : reads_ids1.join("[Accession] OR ") + "[Accession]"
             (sra_metadata, sra_run_list) = sra_query(query, task_params.get('sra_qry', [:]))
             def reads_fasta_pairs = fetch_sra_fasta(sra_run_list, task_params.get('fetch_sra_fasta', [:]))
-            minimap2(genome_fasta, genome_index, gencoll, reads_fasta_pairs, max_intron, task_params.get('minimap2_wnode', [:]))
+            minimap2(genome_fasta, genome_index, gencoll, reads_fasta_pairs, max_intron, minimap_wnode_params)
         } else if (ch_reads) {
-            def renamed_reads = rename_fasta_ids(ch_reads, Channel.from(1..reads.size()))
-            minimap2(genome_fasta, genome_index, gencoll, renamed_reads, max_intron, task_params.get('minimap2_wnode', [:]))
+            //def renamed_reads = rename_fasta_ids(ch_reads, Channel.from(1..reads1.size()))
+            minimap2(genome_fasta, genome_index, gencoll, ch_reads, max_intron, minimap_wnode_params)
         } else {
-            minimap2(genome_fasta, genome_index, gencoll, reads, max_intron, task_params.get('minimap2_wnode ', [:]))
+            minimap2(genome_fasta, genome_index, gencoll, reads, max_intron, minimap_wnode_params)
         }
         filter_est_align(minimap2.out.alignments, task_params.get('filter_est_align', [:]))
     emit:

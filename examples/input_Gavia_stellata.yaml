@@ -2,3 +2,8 @@ genome: https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/030/936/135/GCA_030936135.1
 short_reads: txid37040[Organism] AND biomol_transcript[properties] NOT SRS024887[Accession]
 taxid: 37040
 locus_tag_prefix: egapxtmp
+protein_aligner_name: prosplign
+cmsearch:
+  enabled: false
+trnascan:
+  enabled: false

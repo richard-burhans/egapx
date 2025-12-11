@@ -25,8 +25,8 @@ workflow align_filter_sa {
 
 process run_align_filter_sa {
     input:
-        path genome, stageAs: 'LDS_Index/genome.asnt'
-        path proteins,  stageAs: 'LDS_Index/proteins.asnt'
+        path genome, stageAs: 'indexed/genome.asnt'
+        path proteins,  stageAs: 'indexed/proteins.asnt'
         path asn_file
         val parameters
     output:
@@ -37,8 +37,10 @@ process run_align_filter_sa {
     script:
     """
     mkdir -p output
-    lds2_indexer -source LDS_Index
-    align_filter ${parameters}  -lds2 LDS_Index/lds2.db  -nogenbank -input $asn_file -output output/align.asn -non-match-output output/align-nomatch.asn -report-output output/report.txt 
+    mkdir -p tmp
+    lds2_indexer -source indexed -db tmp/lds_index
+    align_filter ${parameters}  -lds2 tmp/lds_index  -nogenbank -input $asn_file -output output/align.asn -non-match-output output/align-nomatch.asn -report-output output/report.txt 
+    rm -rf tmp
     """
     stub:
     """
