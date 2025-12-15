@@ -3,8 +3,10 @@ nextflow.enable.dsl=2
 
 include { merge_params } from '../../utilities'
 
-split_count=4
-
+split_count=16
+bdb_dir = "blast__db"
+shrd_mft_name="blastdb.mft"    // this must be shared with gc_makeblastdb
+mft_name = "$bdb_dir/$shrd_mft_name"
 
 workflow tblastn_align {
     take:
@@ -30,7 +32,7 @@ process gpx_qsubmit {
     input:
         path genome_asn
         path proteins_asn
-        path blastdb
+        path blastdb, stageAs: bdb_dir+"/*"
         val params
     output:
         path "job.*"
@@ -38,14 +40,18 @@ process gpx_qsubmit {
     script:
         njobs=split_count
     """
-    echo 'prot_ids' > gilist.mft
-    echo $blastdb/blastdb > blastdb.mft
-    
-    mkdir -p ./asncache/
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${proteins_asn} -oseq-ids ./prot_ids -split-sequences
-    
-    gpx_qsubmit $params -ids-manifest gilist.mft -o jobs -nogenbank -asn-cache ./asncache/  -db-manifest blastdb.mft   
-    
+    mkdir -p tmp/asncache
+    auto_prime_cache.py -cache tmp/asncache/ -i ${proteins_asn} -oseq-ids ./prot_ids -split-sequences
+
+    # NB: Use db alias file, *.nal without extension to set the database. 
+    # Use -db instead of -db-manifest, the latter generates absolute paths 
+    # for the database and will not work on clusters without shared filesystem    
+    #gpx_qsubmit $params -ids prot_ids -o jobs -nogenbank -asn-cache tmp/asncache/ -db blastdb/blastdb/blastdb
+    #gpx_qsubmit $params -ids prot_ids -o jobs -nogenbank -asn-cache tmp/asncache/ -db-manifest blastdb/blastdb.mft
+    db_name=\$( cat $mft_name | grep  -o '[^/]*\$' )
+    db_path_name="$bdb_dir/\${db_name}"
+    gpx_qsubmit $params -ids prot_ids -o jobs -nogenbank -asn-cache tmp/asncache/ -db \${db_path_name}
+     
     total_lines=\$(wc -l <jobs)
     (( lines_per_file = (total_lines + ${njobs} - 1) / ${njobs} ))
     echo total_lines=\$total_lines, lines_per_file=\$lines_per_file
@@ -57,6 +63,7 @@ process gpx_qsubmit {
         effective_njobs=$njobs
     fi
     split -nr/\$effective_njobs jobs job. -da 3
+    rm -rf tmp
     """
     stub:
         njobs=16
@@ -70,12 +77,13 @@ process gpx_qsubmit {
 }
 
 
-
 process run_tblastn_wnode {
+    label 'huge_job'
+    label 'long_job'
     input:
         path genome_asn
         path proteins_asn
-        path blastdb  
+        path blastdb, stageAs: bdb_dir+"/*"
         path jobs
         val lines_per_file
         val parameters
@@ -87,21 +95,22 @@ process run_tblastn_wnode {
     if [ \$njobs -lt 16 ]; then
         threads=\$njobs
     else
-        threads=4
+        threads=16
     fi
-    threads=8
-    mkdir -p interim
-    mkdir -p ./asncache/
-    prime_cache -cache ./asncache/ -ifmt asn-seq-entry  -i ${genome_asn} -oseq-ids spids -split-sequences
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${proteins_asn} -oseq-ids spids2 -split-sequences
+    
+    mkdir -p tmp/interim
+    mkdir -p tmp/asncache
+
+    auto_prime_cache.py -cache tmp/asncache/ -i ${genome_asn} -oseq-ids spids -split-sequences
+    auto_prime_cache.py -cache tmp/asncache/ -i ${proteins_asn} -oseq-ids spids2 -split-sequences
     filename=\$(basename -- "$jobs")
     extension="\${filename##*.}"
     (( start_job_id = ((10#\$extension) * $lines_per_file) + 1 ))
-    tblastn_wnode -asn-cache  ./asncache/   -workers \$threads -start-job-id \$start_job_id -input-jobs $jobs -nogenbank  -O interim $parameters 
+    EXCEPTION_STACK_TRACE_LEVEL=Warning DEBUG_STACK_TRACE_LEVEL=Warning DIAG_POST_LEVEL=Trace tblastn_wnode -asn-cache tmp/asncache/ -workers \$threads -start-job-id \$start_job_id -input-jobs $jobs -nogenbank -O tmp/interim $parameters
     
     mkdir -p blast
-    cat interim/* > blast/tblastn_wnode.${task.index}.gpx-job.asnb
-    rm -rf interim
+    cat tmp/interim/* > blast/tblastn_wnode.${task.index}.gpx-job.asnb
+    rm -rf tmp
     """
     stub:
     """
@@ -129,4 +138,3 @@ process gpx_make_outputs {
     touch output/blast.asn
     """
 }
-

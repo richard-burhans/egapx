@@ -77,8 +77,8 @@ process annot {
         path jobs
         path chains // used for staging chain files, referred from jobs
         path hmm_params
-        path softmask_lds2
-        path softmask
+        path softmask_lds2 // FIXME: we don't use this parameter but recalculate it for softmask
+        path softmask, stageAs: 'softmask/*'
         path genome, stageAs: 'indexed/*'
         path proteins_asn, stageAs: 'indexed/*'
         val lines_per_file
@@ -93,13 +93,11 @@ process annot {
     else
         threads=16
     fi
-
-    lds2=indexed_lds
+    mkdir -p tmp
+    lds2=tmp/indexed_lds
     if [ -n "$softmask" ]; then
-        mkdir -p sm_src
-        mv $softmask ./sm_src/
-        lds2_indexer -source ./sm_src/ -db softmask_lds2
-        lds2+=",softmask_lds2"
+        lds2_indexer -source softmask -db tmp/softmask_lds2
+        lds2+=",tmp/softmask_lds2"
     fi    
 
     filename=\$(basename -- "$jobs")
@@ -107,18 +105,18 @@ process annot {
     (( start_job_id = ((10#\$extension) * $lines_per_file) + 1 ))
 
     # make the local LDS of the genomic fasta
-    lds2_indexer -source indexed -db indexed_lds
+    lds2_indexer -source indexed -db tmp/indexed_lds
 
     # When running multiple jobs on the cluster there is a chance that
     # several jobs will run on the same node and thus generate files
     # with the same filename. We need to avoid that to be able to stage
     # the output files for gpx_make_outputs. We add the job file numeric
     # extension as a prefix to the filename.
-    mkdir -p interim
-    annot_wnode $params -nogenbank -lds2 \$lds2  -start-job-id \$start_job_id -workers \$threads -input-jobs $jobs -param $hmm_params -O interim || true
+    mkdir -p tmp/interim
+    annot_wnode $params -nogenbank -lds2 \$lds2  -start-job-id \$start_job_id -workers \$threads -input-jobs $jobs -param $hmm_params -O tmp/interim || true
     mkdir -p output
-    cat interim/* > output/annot_wnode.${task.index}.gpx-job.asnb
-    rm -rf interim
+    cat tmp/interim/* > output/annot_wnode.${task.index}.gpx-job.asnb
+    rm -rf tmp
     """
     stub:
     """

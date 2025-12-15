@@ -84,11 +84,11 @@ process final_asn {
     script:
     """
     mkdir -p output
-    mkdir -p asncache
+    mkdir -p tmp/asncache
     mkdir -p '${assembly_name}'
 
-    prime_cache -cache ./asncache/ -ifmt asn-seq-entry  -i $genome_asn  -oseq-ids cached_ids  -split-sequences
-    concat_seqentries -cache ./asncache/ -o "./${assembly_name}/genome.asnb.gz"
+    prime_cache -cache tmp/asncache/ -ifmt asn-seq-entry  -i $genome_asn  -oseq-ids cached_ids  -split-sequences
+    concat_seqentries -cache tmp/asncache/ -o "./${assembly_name}/genome.asnb.gz"
     asn_translator -gzip -i "./${assembly_name}/genome.asnb.gz"  -o "./${assembly_name}/genome.asnt" 
 
     echo "./${assembly_name}/genome.asnt" > ./scaffold.mft
@@ -103,15 +103,15 @@ process final_asn {
     ## prime_cache
     # EXCEPTION_STACK_TRACE_LEVEL=Warning DEBUG_STACK_TRACE_LEVEL=Warning DIAG_POST_LEVEL=Trace
 
-    final_asn $params -egapx -nogenbank  -gencoll-asn $gencoll_asn -asn-cache ./asncache/  \
+    final_asn $params -egapx -nogenbank  -gencoll-asn $gencoll_asn -asn-cache tmp/asncache/  \
         -scaffolds ./scaffold.mft  -chromosomes ./chromosome.mft  \
         -gene_weights ./gene_weights.mft  \
         -annots ./annots.mft -locus_lnk ./locus_link.mft -locus_types ./locus_types.mft \
         -S NONE -genbank-mode -out_dir  ./output/
 
-    mkdir -p raw/scaf
-    mv ./output/scaf/${assembly_name}/*.asn ./raw/scaf
-    for f in ./raw/scaf/*.asn; do
+    mkdir -p tmp/scaf
+    mv ./output/scaf/${assembly_name}/*.asn tmp/scaf
+    for f in tmp/scaf/*.asn; do
         of=./output/scaf/${assembly_name}/`basename \$f`
         asn_cleanup -basic -i \$f -o \$of
         cat \$of >> output/annotated_genome.asn
@@ -119,9 +119,9 @@ process final_asn {
 
     # NB if (when) chromosomes is not empty the same logic should be applied to chrom directroies
     if [ -s ./output/chrom/${assembly_name}/*.asn ]; then
-        mkdir -p raw/chrom
-        mv ./output/chrom/${assembly_name}/*.asn ./raw/chrom
-        for f in ./raw/chrom/*.asn; do
+        mkdir -p tmp/chrom
+        mv ./output/chrom/${assembly_name}/*.asn tmp/chrom
+        for f in tmp/chrom/*.asn; do
             of=./output/chrom/${assembly_name}/`basename \$f`
             asn_cleanup -basic -i \$f -o \$of
             cat \$of >> output/annotated_genome.asn
@@ -130,7 +130,7 @@ process final_asn {
 
     mkdir -p output/val/${assembly_name}
     for f in ./output/scaf/${assembly_name}/*.asn; do
-        asnvalidate -Q 0 -asn-cache ./asncache/ -v 4 -A -X -Z -o ./output/val/${assembly_name}/`basename \$f .asn`.val -i \$f
+        asnvalidate -Q 0 -asn-cache tmp/asncache/ -v 4 -A -X -Z -o ./output/val/${assembly_name}/`basename \$f .asn`.val -i \$f
     done
 
     # joint manifest is scaffolds, chromosomes, and organelles (not implemented here)
@@ -138,7 +138,8 @@ process final_asn {
     echo "./output/annotated_genome.asn" > ./joint.mft
 
     mkdir -p output/stats
-    asn_stats -input-manifest ./joint.mft -o output/stats/feature_counts.txt -counts-xml-output output/stats/feature_counts.xml -stats-xml-output output/stats/feature_stats.xml -t -break-by assembly-unit -asn-cache ./asncache/ -gencoll-asn $gencoll_asn -genbank-mode
+    asn_stats -input-manifest ./joint.mft -o output/stats/feature_counts.txt -counts-xml-output output/stats/feature_counts.xml -stats-xml-output output/stats/feature_stats.xml -t -break-by assembly-unit -asn-cache tmp/asncache/ -gencoll-asn $gencoll_asn -genbank-mode -nogenbank
+    rm -rf tmp
     """
     stub:
     """

@@ -12,7 +12,7 @@ workflow minimap2_index {
         String index_params =  merge_params("-k 15 -w 5", parameters, 'minimap2_index')
         run_minimap2_index(genome, index_params)
     emit:
-        index = run_minimap2_index.out
+        index = run_minimap2_index.out.index
 }
 
 
@@ -21,10 +21,11 @@ process run_minimap2_index {
         path genome
         val index_params
     output:
-        path 'index.mmi'
+        path ('output/index.mmi'), emit: "index"
     script:
     """
-    minimap2 -d index.mmi $index_params $genome
+    mkdir -p output
+    minimap2 -d output/index.mmi $index_params $genome
     """
     stub:
     """

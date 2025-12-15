@@ -39,10 +39,10 @@ process gpx_qsubmit {
     script:
         njobs=split_count
     """
-    mkdir -p ./asncache/
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids spids -split-sequences
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${proteins_asnb} -oseq-ids spids2 -split-sequences
-    gpx_qsubmit $params -asn $compartments -o jobs -nogenbank -asn-cache ./asncache/ 
+    mkdir -p tmp/asncache
+    auto_prime_cache.py -cache tmp/asncache/  -i ${genome_asnb} -oseq-ids spids -split-sequences
+    auto_prime_cache.py -cache tmp/asncache/ -i ${proteins_asnb} -oseq-ids spids2 -split-sequences
+    gpx_qsubmit $params -asn $compartments -o jobs -nogenbank -asn-cache tmp/asncache/ 
     total_lines=\$(wc -l <jobs)
     (( lines_per_file = (total_lines + ${njobs} - 1) / ${njobs} ))
     echo total_lines=\$total_lines, lines_per_file=\$lines_per_file
@@ -54,6 +54,7 @@ process gpx_qsubmit {
         effective_njobs=$njobs
     fi
     split -nr/\$effective_njobs jobs job. -da 3
+    rm -rf tmp
     """
     stub:
         njobs=16
@@ -69,6 +70,8 @@ process gpx_qsubmit {
 
 
 process run_prosplign_wnode {
+    label 'huge_job'
+    label 'long_job'
     input:
         path genome_asnb
         path proteins_asnb
@@ -88,18 +91,18 @@ process run_prosplign_wnode {
     else
         threads=16
     fi
-    mkdir -p interim
-    mkdir -p asncache
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids spids -split-sequences
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${proteins_asnb} -oseq-ids spids2 -split-sequences
+    mkdir -p tmp/interim
+    mkdir -p tmp/asncache
+    auto_prime_cache.py -cache tmp/asncache/ -i ${genome_asnb} -oseq-ids spids -split-sequences
+    auto_prime_cache.py -cache tmp/asncache/ -i ${proteins_asnb} -oseq-ids spids2 -split-sequences
     
     filename=\$(basename -- "$jobs")
     extension="\${filename##*.}"
     (( start_job_id = ((10#\$extension) * $lines_per_file) + 1 ))
-    prosplign_wnode -max_intron $max_intron -asn-cache ./asncache/ -workers \$threads -start-job-id \$start_job_id -input-jobs $jobs -nogenbank  -O interim $parameters
+    prosplign_wnode -max_intron $max_intron -asn-cache tmp/asncache/ -workers \$threads -start-job-id \$start_job_id -input-jobs $jobs -nogenbank  -O tmp/interim $parameters
     mkdir -p output
-    cat interim/* > output/prosplign_wnode.${task.index}.gpx-job.asnb
-    rm -rf interim
+    cat tmp/interim/* > output/prosplign_wnode.${task.index}.gpx-job.asnb
+    rm -rf tmp
     """
 
     stub:

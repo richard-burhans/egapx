@@ -3,3 +3,7 @@ short_reads: txid43150[Organism] AND 75:350[ReadLength] AND illumina[Platform] A
 long_reads: txid43150[Organism] AND (oxford_nanopore[Platform] OR pacbio_smrt[Platform]) AND biomol_rna[Properties]
 taxid: 43150
 locus_tag_prefix: egapxtmp
+cmsearch:
+  enabled: false
+trnascan:
+  enabled: false

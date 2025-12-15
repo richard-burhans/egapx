@@ -28,12 +28,11 @@ process align_filter {
     name = align_asn.baseName
     """
     mkdir -p output
-    lds2_indexer -source ${align_asn} -db LDS2_Index
+    lds2_indexer -source ./indexed -db LDS2_Index
     align_filter $align_filter_params -lds2 LDS2_Index -i ${align_asn} -o output/${name}.filtered_aln.asnb
     """
     stub:
     name = align_asn.baseName
-    println("align_filter parameters: $align_filter_params")
     """
     mkdir -p output
     touch output/${name}.filtered_aln.asnb
@@ -53,8 +52,9 @@ process align_sort {
     """
     mkdir -p output
     mkdir -p tmp
-    lds2_indexer -source ${align_asn} -db LDS2_Index
+    lds2_indexer -source ./indexed -db LDS2_Index
     align_sort -tmp tmp $align_sort_params -lds2 LDS2_Index -i ${align_asn} -o output/${name}.sorted_aln.asnb
+    rm -rf tmp
     """
     stub:
     name = align_asn.baseName

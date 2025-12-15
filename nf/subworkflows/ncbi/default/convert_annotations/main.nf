@@ -56,7 +56,7 @@ process run_converter {
     cat `find tmpout -name g*.transcripts.fna -o -name all_unannot*.transcripts.fna` > output/complete.transcripts.fna
     cat `find tmpout -name g*.cds.fna -o -name all_unannot*.cds.fna` > output/complete.cds.fna
     cat `find tmpout -name g*.proteins.faa -o -name all_unannot*.proteins.faa` > output/complete.proteins.faa
-    rm tmpout/*
+    rm -rf tmpout
     touch output/complete.genomic.gff
     touch output/complete.genomic.gtf
     touch output/complete.genomic.fna

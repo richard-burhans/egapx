@@ -36,30 +36,23 @@ process read_sra_file {
     """
 }
 
-
 process run_fetch_sra_fasta {
     input:
         val sra
     output:
-        tuple val (sra),  path ('output/*.{1,2}')  , emit: 'fasta_pair_list'
+        tuple val (sra),  path ('output/*_{1,2}.fasta')  , emit: 'fasta_pair_list'
     script:
     """
-    output_${sra}=\$(srapath ${sra})
-    curl -o ${sra} \$output_${sra}
-    fasterq-dump --skip-technical --threads 6 --split-files --seq-defline ">gnl|SRA|\\\$ac.\\\$si.\\\$ri" --fasta -O .  ./${sra}
-    rm -f ${sra}
     mkdir -p output
-    if [ -f ${sra}_1.fasta ]; then
-        mv ${sra}_1.fasta output/${sra}.1
-    fi
-    if [ -f ${sra}_2.fasta ]; then
-        mv ${sra}_2.fasta output/${sra}.2
-    fi
+    curl -fL --retry 5 -C - -o ${sra}.sra \$(srapath ${sra})
+    fasterq-dump --skip-technical --threads 6 --split-files --seq-defline ">gnl|SRA|\\\$ac.\\\$si.\\\$ri" --fasta --outdir output  ./${sra}.sra
+    ls output/${sra}_*.fasta
+    rm -f ${sra}.sra
     """
     stub:
     """
     mkdir -p output
-    touch output/${sra}.1
-    touch output/${sra}.2
+    touch output/${sra}_1.fasta
+    touch output/${sra}_2.fasta
     """
 }

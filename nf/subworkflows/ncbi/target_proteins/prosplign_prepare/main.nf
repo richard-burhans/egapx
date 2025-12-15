@@ -24,7 +24,7 @@ workflow prosplign_prepare {
 process run_prosplign_prepare{
     input:
         path genome_asnb
-        path proteins_asnb
+        path proteins_asn
         path gencoll_asn
         path  seed_hits
         val max_intron
@@ -35,12 +35,13 @@ process run_prosplign_prepare{
     script:
     """
     mkdir -p output
-    mkdir -p asncache
+    mkdir -p tmp/asncache
     echo "${seed_hits.join('\n')}" > seed_hits.mft
-    prime_cache -cache asncache -ifmt asnb-seq-entry -i ${genome_asnb} -oseq-ids spids ##-split-sequences
-    prime_cache -cache asncache -ifmt asnb-seq-entry -i ${proteins_asnb} -oseq-ids spids2 -split-sequences
-    prosplign_compart -asn-cache asncache -nogenbank -max_intron $max_intron -input-manifest seed_hits.mft $prosplign_compart_params -o unfiltered_compartments.asn -ifmt seq-align-set
-    prosplign_compart_filter -asn-cache asncache -nogenbank -i unfiltered_compartments.asn -gc-assembly $gencoll_asn $prosplign_compart_filter_params -o output/compartments.asn
+    auto_prime_cache.py -cache tmp/asncache -i ${genome_asnb} -oseq-ids spids ##-split-sequences
+    auto_prime_cache.py -cache tmp/asncache -i ${proteins_asn} -oseq-ids spids2 -split-sequences
+    prosplign_compart -asn-cache tmp/asncache -nogenbank -max_intron $max_intron -input-manifest seed_hits.mft $prosplign_compart_params -o unfiltered_compartments.asn -ifmt seq-align-set
+    prosplign_compart_filter -asn-cache tmp/asncache -nogenbank -i unfiltered_compartments.asn -gc-assembly $gencoll_asn $prosplign_compart_filter_params -o output/compartments.asn
+    rm -rf tmp
     """
     stub:
     """

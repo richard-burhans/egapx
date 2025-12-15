@@ -69,6 +69,21 @@ process gpx_qsubmit {
     idfile = "${sampleID}.ids"
     LDSfile = "${sampleID}.LDS"
     subject = "${genome_index}"
+
+    # Check for .zst files and decompress them
+    reads_dir = "reads"
+    for filename in os.listdir(reads_dir):
+        if filename.endswith('.zst'):
+            zst_path = os.path.join(reads_dir, filename)
+            output_path = zst_path[:-4]  # Remove .zst extension
+            
+            # Skip if already decompressed
+            if not os.path.exists(output_path):
+                print(f"Decompressing {zst_path} -> {output_path}", flush=True)
+                subprocess.run(['zstd', '-d', zst_path, '-o', output_path], check=True)
+            else:
+                print(f"Decompressed file already exists: {output_path}", flush=True)
+
     # Read batch_size parameter
     parts = shlex.split("${parameters}")
     batch_size = read_parameter(parts, "-batch-size", 1000)
@@ -156,14 +171,13 @@ process minimap2_wnode {
         String minimap2_params = merge_params("", parameters, "minimap2-params")
         String minimap2_wnode_params =  merge_params("-max-intron ${max_intron}", parameters, "minimap2_wnode") + ' -minimap2-params "' + minimap2_params + '"'
     """
-    mkdir -p interim
-    mkdir -p tmp
-    mkdir -p asncache
-    prime_cache -cache asncache/ -ifmt fasta -i genome/* -split-sequences
-    minimap2_wnode -minimap2-executable `which minimap2` -filter-executable `which exon_selector` -start-job-id $start_job_id -input-jobs $job -nogenbank -lds2 $reads_LDS -asn-cache asncache -gc $gencoll -work-area tmp -O interim $minimap2_wnode_params
+    mkdir -p tmp/asncache
+    mkdir -p tmp/interim
+    prime_cache -cache tmp/asncache/ -ifmt fasta -i genome/* -split-sequences
+    minimap2_wnode -separate-output-by-run no -minimap2-executable `which minimap2` -filter-executable `which exon_selector` -start-job-id $start_job_id -input-jobs $job -nogenbank -lds2 $reads_LDS -asn-cache tmp/asncache -gc $gencoll -work-area tmp -O tmp/interim $minimap2_wnode_params
     mkdir -p alignments
-    cat interim/* > alignments/minimap2_wnode.${task.index}.gpx-job.asnb
-    rm -rf interim
+    cat tmp/interim/* > alignments/minimap2_wnode.${task.index}.gpx-job.asnb
+    rm -rf tmp
     """
     stub:
         String minimap2_params = merge_params("", parameters, "minimap2-params")

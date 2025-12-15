@@ -23,8 +23,8 @@ workflow align_sort_sa {
 
 process run_align_sort {
     input:
-        path genome, stageAs: 'LDS_Index/genome.asnt'
-        path proteins, stageAs: 'LDS_Index/proteins.asnt'
+        path genome, stageAs: 'indexed/genome.asnt'
+        path proteins, stageAs: 'indexed/proteins.asnt'
         path alignments
         val parameters
     output:
@@ -32,11 +32,11 @@ process run_align_sort {
     script:
     """
     mkdir -p output
-    mkdir -p LDS_Index
-    lds2_indexer -source LDS_Index
-    echo "${alignments.join('\n')}" > alignments.mft
     mkdir -p tmp
-    align_sort  $parameters -tmp tmp -input-manifest alignments.mft  -o output/sorted_aligns.asn  -lds2 LDS_Index/lds2.db
+    lds2_indexer -source indexed -db tmp/lds_index
+    echo "${alignments.join('\n')}" > alignments.mft
+    align_sort  $parameters -tmp tmp -input-manifest alignments.mft  -o output/sorted_aligns.asn  -lds2 tmp/lds_index
+    rm -rf tmp
     """
     stub:
     """

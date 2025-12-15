@@ -29,12 +29,13 @@ process gnomon_asn2fasta {
     script:
     """
     mkdir -p output
-    mkdir -p asncache
+    mkdir -p tmp/asncache
     for f in input/*; do
         echo \$f >> input.mft
     done
-    prime_cache -cache asncache -input-manifest input.mft -ifmt asn-seq-entry
-    gnomon_asn2fasta -nogenbank -asn-cache asncache -gc-assembly gencoll.asn -ifmt seq-entry -input-manifest input.mft -prot-output output/@.prot.fa -prot-output-manifest output/proteins.mft $params
+    prime_cache -cache tmp/asncache -input-manifest input.mft -ifmt asn-seq-entry
+    gnomon_asn2fasta -nogenbank -asn-cache tmp/asncache -gc-assembly gencoll.asn -ifmt seq-entry -input-manifest input.mft -prot-output output/@.prot.fa -prot-output-manifest output/proteins.mft $params
+    rm -rf tmp
     """
     stub:
     """

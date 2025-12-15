@@ -68,12 +68,14 @@ process get_genome_info {
         name_prefix = parameters.annotation_name_prefix
         lcl_id_cmd = "cat"
         if(localize_ids) {
-            lcl_id_cmd = "sed 's/>\\([^ |]\\+\\)\\( .*\\)\\?\$/>lcl\\|\\1\\2/'"
-        } 
+            lcl_id_cmd = "sed -r 's/>([^ |]+)( .*)?\$/>lcl|\\1\\2/'"
+        }
+        add_title_cmd = "sed -r 's/>([^ ]+)\$/>\\1 title/'"
     """
     # echo "need_zcat: ${need_zcat}, out_fasta: ${out_fasta}"
     mkdir -p ${genome_dir}
     mkdir -p ${fasta_dir}
+    mkdir -p tmp/asncache
     
     first_char=""
     if [[ ${need_zcat} == true ]]; then
@@ -84,17 +86,13 @@ process get_genome_info {
 
     if [[ \${first_char} == ">" ]]; then
         if [[ ${need_zcat} == true ]]; then
-            # zcat ${input_genome_file} | sed 's/^\\(>gi|[0-9]\\+\\)|\\?\\([^ ]\\+\\)\\(.*\\)/\\1\\3/' > ${out_fasta}
-            # zcat ${input_genome_file} > ${out_fasta}
-            zcat ${input_genome_file} | ${lcl_id_cmd} > ${out_fasta}
+            zcat ${input_genome_file} | ${lcl_id_cmd} | ${add_title_cmd} > ${out_fasta}
         else
-            # sed 's/^\\(>gi|[0-9]\\+\\)|\\?\\([^ ]\\+\\)\\(.*\\)/\\1\\3/' ${input_genome_file} > ${out_fasta}
-            # mv ${input_genome_file} ${out_fasta}
-            ${lcl_id_cmd} ${input_genome_file} > ${out_fasta}
+            ${lcl_id_cmd} ${input_genome_file} | ${add_title_cmd} > ${out_fasta}
         fi
         multireader -flags ParseRawID -out-format asn_text -input ${out_fasta} -output ${genome_asn}
         multireader -flags ParseRawID -out-format asn_binary -input ${out_fasta} -output ${genome_asnb}
-        prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids ./cache_id_list  -split-sequences
+        prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids ./cache_id_list  -split-sequences
     elif [[ \${first_char} == "S" ]]; then
         if [[ ${need_zcat} == true ]]; then
             zcat ${input_genome_file}  > ${genome_asn}
@@ -102,8 +100,8 @@ process get_genome_info {
             cp ${input_genome_file} ${genome_asn}
         fi
         asn_translator -i  ${genome_asn} -o ${genome_asnb} -b 
-        prime_cache -cache ./asncache/ -ifmt asn-seq-entry  -i ${input_genome_file} -oseq-ids ./cache_id_list  -split-sequences
-        getfasta -nogenbank -asn-cache ./asncache/ -i ./cache_id_list  -o ${out_fasta}
+        prime_cache -cache tmp/asncache/ -ifmt asn-seq-entry  -i ${input_genome_file} -oseq-ids ./cache_id_list  -split-sequences
+        getfasta -nogenbank -asn-cache tmp/asncache/ -i ./cache_id_list  -o ${out_fasta}
     else 
         if [[ ${need_zcat} == true ]]; then
             zcat ${input_genome_file}  > ${genome_asnb}
@@ -111,17 +109,17 @@ process get_genome_info {
             cp ${input_genome_file} ${genome_asnb}
         fi
         asn_translator -i  ${genome_asnb} -o ${genome_asn}  
-        prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${input_genome_file} -oseq-ids ./cache_id_list  -split-sequences
-        getfasta -nogenbank -asn-cache ./asncache/ -i ./cache_id_list  -o ${out_fasta}
+        prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${input_genome_file} -oseq-ids ./cache_id_list  -split-sequences
+        getfasta -nogenbank -asn-cache tmp/asncache/ -i ./cache_id_list  -o ${out_fasta}
     fi
 
     # Old way, now use gc_get_molecules. For multipart ids with gi first use the second part
     # grep -oP "^>\\K[^ ]+" ${out_fasta} | sed 's/^\\(gi|[0-9]\\+\\)|\\([^|]\\+|[^|]\\+\\)|\\?/\\2/' >list.seqids
-    ##multireader -flags ParseRawID -out-format asn_text -input ${out_fasta} -output ${genome_asn}
-    ##multireader -flags ParseRawID -out-format asn_binary -input ${out_fasta} -output ${genome_asnb}
-    #lds2_indexer -source ${genome_dir}/ -db LDS2
     # Using all parts of multipart ids is preferrable, but slower - one more pass over genomic FASTA
-    gc_create -unplaced ${out_fasta} -unplaced-fmt fasta -fasta-parse-raw-id -gc-assm-name "$name_prefix" -nogenbank -asn-cache ./asncache/ >${base_name_stripped}-gencoll.asn
+    
+    ## gc_create seq-id works with some characters that gc_create fasta does not
+    gc_create -unplaced ./cache_id_list -unplaced-fmt seq-id -fasta-parse-raw-id -gc-assm-name "$name_prefix" -nogenbank -asn-cache tmp/asncache/ >${base_name_stripped}-gencoll.asn
+    
     gc_get_molecules -gc-assembly ${base_name_stripped}-gencoll.asn -filter all -level top-level > list.seqids
 
     #TODO: subtract organelles from list
@@ -138,6 +136,7 @@ process get_genome_info {
     fi
     # NB: this printout is essential for effective max_intron value to be reported
     echo "max_intron \$max_intron"
+    rm -rf tmp
     """
     
     stub:
@@ -170,9 +169,11 @@ process get_genome_info {
 workflow setup_proteins {
     take:
         proteins
+        filter_taxons
+        additional_proteins
         parameters  // Map : extra parameter and parameter update
     main:
-        convert_proteins(proteins, true)
+        convert_proteins(proteins, true, filter_taxons, additional_proteins)
     emit:
         unpacked_proteins = convert_proteins.out.unpacked_proteins
         proteins_asn = convert_proteins.out.proteins_asn
@@ -185,7 +186,7 @@ workflow setup_ext_proteins {
         proteins
         parameters  // Map : extra parameter and parameter update
     main:
-        convert_proteins(proteins, false)
+        convert_proteins(proteins, false, [], [])
     emit:
         unpacked_proteins = convert_proteins.out.unpacked_proteins
         proteins_asn = convert_proteins.out.proteins_asn
@@ -197,45 +198,55 @@ process convert_proteins {
     input:
         path fasta_proteins_file, stageAs: 'src/*'
         val  localize_ids
+        val  filter_taxons
+        path additional_proteins, stageAs: 'user_src/*'
     output:
         path out_fasta, emit: 'unpacked_proteins'
         path proteins_asn, emit: 'proteins_asn'
         path proteins_asnb, emit: 'proteins_asnb'
     script:
-        need_zcat = fasta_proteins_file.toString().endsWith('.gz')
-        base_name_stripped = fasta_proteins_file.baseName.toString().replaceAll(/\.(fa(sta)?|faa)(\.gz)?$/, "")
-        fasta_name = base_name_stripped + ".faa"
+        def need_zcat = fasta_proteins_file.toString().endsWith('.gz')
+        def base_name_stripped = fasta_proteins_file.baseName.toString().replaceAll(/\.(fa(sta)?|faa)(\.gz)?$/, "")
+        def fasta_name = base_name_stripped + ".faa"
 
         asn_dir = "asn"
         fasta_dir = "fasta"
         out_fasta = fasta_dir + "/" + fasta_name
         proteins_asn = asn_dir + "/" + base_name_stripped + ".asn"
         proteins_asnb = asn_dir + "/" + base_name_stripped + ".asnb"
-        lcl_id_cmd = "cat"
-        if(localize_ids) {
-            lcl_id_cmd = "sed 's/>\\([^ |]\\+\\)\\( .*\\)\\?\$/>lcl\\|\\1\\2/'"
-        }
+        def source_cmd = need_zcat ? "zcat" : "cat"
+        def lcl_id_cmd = localize_ids ? " | sed 's/>\\([^ |]\\+\\)\\( .*\\)\\?\$/>lcl\\|\\1\\2/'" : ""
+        def fiter_taxons_cmd = filter_taxons ? ' | seqkit grep -r -n -p "\\[(' + filter_taxons.join(")|(") + ')\\]"' : ""
     """
     mkdir -p ${asn_dir}
     mkdir -p ${fasta_dir}
-    if [[ ${need_zcat} == true ]]; then
-        zcat ${fasta_proteins_file} | ${lcl_id_cmd} > ${out_fasta}
-    else
-        ${lcl_id_cmd} ${fasta_proteins_file} > ${out_fasta}
-    fi
+    ${source_cmd} ${fasta_proteins_file}${fiter_taxons_cmd}${lcl_id_cmd} > ${out_fasta}
+    for f in user_src/*; do
+        [ -e "\$f" ] || continue
+        if [[ \$f == *.gz ]]; then
+            zcat \$f >> ${out_fasta}
+        else
+            cat \$f >> ${out_fasta}
+        fi
+    done
     multireader -flags ParseRawID -out-format asn_text -input ${out_fasta} -output ${proteins_asn}
     multireader -flags ParseRawID -out-format asn_binary -input ${out_fasta} -output ${proteins_asnb}
     """
 
     stub:
-        base_name_stripped = fasta_proteins_file.baseName.toString().replaceAll(/\.(fa(sta)?|faa)(\.gz)?$/, "")
-        fasta_name = base_name_stripped + ".faa"
+        def need_zcat = fasta_proteins_file.toString().endsWith('.gz')
+        def base_name_stripped = fasta_proteins_file.baseName.toString().replaceAll(/\.(fa(sta)?|faa)(\.gz)?$/, "")
+        def fasta_name = base_name_stripped + ".faa"
+
         asn_dir = "asn"
         fasta_dir = "fasta"
         out_fasta = fasta_dir + "/" + fasta_name
         proteins_asn = asn_dir + "/" + base_name_stripped + ".asn"
         proteins_asnb = asn_dir + "/" + base_name_stripped + ".asnb"
-    
+        def source_cmd = need_zcat ? "zcat" : "cat"
+        def lcl_id_cmd = localize_ids ? "| sed 's/>\\([^ |]\\+\\)\\( .*\\)\\?\$/>lcl\\|\\1\\2/'" : ""
+        def fiter_taxons_cmd = filter_taxons ? '| seqkit grep -r -n -p "\\[(' + filter_taxons.join(")|(") + ')\\]"' : ""
+        print "Protein processing command: ${source_cmd} ${fasta_proteins_file}${fiter_taxons_cmd}${lcl_id_cmd} > ${out_fasta}"
     """
     mkdir -p $asn_dir
     mkdir -p $fasta_dir
@@ -264,33 +275,20 @@ process rename_fasta_ids {
     output:
         tuple val(sampleID),  path ('output/*')  , emit: 'fasta_pair_list'
     script:
-        file_name = fastx.getBaseName() + '.fasta'
+        def file_name = fastx.getBaseName()
+        if (!file_name.endsWith(".fasta")) {
+            file_name += ".fasta"
+        }
+        def srrFmt = String.format('SRR%08d', (srr_id as int))
     """
-    #!/usr/bin/env python3
-    import os
-    os.makedirs('output', exist_ok=True)
-    with open('${fastx}', 'r') as infile, open('output/${file_name}', 'w') as outfile:
-        rec_cnt = 1
-        skip_next = False
-        for line in infile:
-            line = line.lstrip()
-            if not line:
-                continue
-            if line[0] in {'>', '@', '+'}:
-                new_id = f"gnl|SRA|SRR{${srr_id}:08d}.{rec_cnt}.1"
-                if line[0] in {'>', '@'}:
-                    outfile.write(f">{new_id}{os.linesep}")
-                if line[0] in {'>', '+'}:
-                    rec_cnt += 1
-                if line[0] == '+':
-                    skip_next = True
-            elif skip_next:
-                skip_next = False
-            else:
-                outfile.write(line)
+    mkdir -p output
+    seqkit fq2fa -j 7 '${fastx}' | seqkit replace -j 7 -w 0 -p '.*' -r 'gnl|SRA|${srrFmt}.{nr}.1' > output/${file_name}
     """
     stub:
-        file_name = fastx.getBaseName() + '.fasta'
+        def file_name = fastx.getBaseName()
+        if (!file_name.endsWith(".fasta")) {
+            file_name += ".fasta"
+        }
     """
     mkdir -p output
     echo $srr_id > output/$file_name

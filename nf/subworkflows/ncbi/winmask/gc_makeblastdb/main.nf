@@ -3,6 +3,7 @@ nextflow.enable.dsl=2
 
 include { merge_params } from '../../utilities'
 
+shrd_mft_name="blastdb.mft"    // this must be shared with tblastn_align
 
 workflow gc_makeblastdb {
     take:
@@ -26,20 +27,22 @@ process run_gc_makeblastdb{
         path alternate_softmask
         val params
     output:
-        path "output/*", emit: 'blastdb'
+        path "output/*", emit: 'blastdb'   // this is not the output directory itself, it is the collection of files under output. 
+                                           // process that use this should expect to get the collection of blastdb files staged as they direct
+                                           // without another directory layer around it. 
     script:
     """
-    echo $seqids > seqids.mft
-    echo $gencoll_asn > gencoll_asn.mft
     echo "${alternate_softmask.join('\n')}" > softmask_data.mft
-    mkdir -p asncache
-    prime_cache -cache asncache -ifmt asnb-seq-entry -i ${genome_asnb} -oseq-ids spids -split-sequences
+    mkdir -p tmp/asncache
+    prime_cache -cache tmp/asncache -ifmt asnb-seq-entry -i ${genome_asnb} -oseq-ids spids -split-sequences
     mkdir -p output
-    gc_makeblastdb -nogenbank -asn-cache asncache -gc-assembly-manifest gencoll_asn.mft -input-manifest seqids.mft -softmask-manifest softmask_data.mft -output-path output  -title 'BLASTdb created by EGapx' -output-assembly-unit-manifest output/blastdb_assm_unit.mft  -output-full-assembly-manifest output/blastdb_assm.mft  -output-manifest output/blastdb.mft 
+    gc_makeblastdb -nogenbank -asn-cache tmp/asncache -gc-assembly $gencoll_asn -input $seqids -softmask-manifest softmask_data.mft -output-manifest output/$shrd_mft_name -output-path output -title 'BLASTdb created by EGAPx'
+    rm -rf tmp
     """
     stub:
     """
     mkdir -p output
     touch output/blastdb.nal
+    echo "blastdb" > output/blastdb.mft 
     """
 }

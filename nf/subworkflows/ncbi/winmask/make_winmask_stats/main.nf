@@ -29,11 +29,12 @@ process run_winmask_stats {
     genome_basename = genome_asnb.getBaseName().toString().replaceFirst(/\.(fa(sta)?|fna|asn(t|b)?)(\.gz)?$/, "")
     """
     echo $seqids > seqids.mft
-    mkdir -p asncache
-    prime_cache -cache asncache -ifmt asnb-seq-entry -i ${genome_asnb} -oseq-ids spids -split-sequences
+    mkdir -p tmp/asncache
+    prime_cache -cache tmp/asncache -ifmt asnb-seq-entry -i ${genome_asnb} -oseq-ids spids -split-sequences
     mkdir -p output
-    make_winmask_stats -logfile ./mws.log -nogenbank -asn-cache asncache -gc-assembly ${gencoll_asn} -infmt seqids -input-manifest seqids.mft -out output/${genome_basename}.winmask_stats -sformat obinary -smem 1024
+    make_winmask_stats -logfile ./mws.log -nogenbank -asn-cache tmp/asncache -gc-assembly ${gencoll_asn} -infmt seqids -input-manifest seqids.mft -out output/${genome_basename}.winmask_stats -sformat obinary -smem 1024
     cat ./mws.log
+    rm -rf tmp
     """
     stub:
     genome_basename = genome_asnb.getBaseName().toString().replaceFirst(/\.(fa(sta)?|fna|asn(t|b)?)(\.gz)?$/, "")

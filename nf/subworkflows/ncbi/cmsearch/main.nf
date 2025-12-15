@@ -6,7 +6,6 @@ workflow cmsearch_plane
 {
 take:
     genome_fasta  // path to genome fasta (can be gzipped)
-                  // TODO: take asn_cache produced by upstream by setup_genome instead
 
     /*
     Expected params content:

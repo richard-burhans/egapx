@@ -4,3 +4,7 @@ short_reads:
  - SRR33694212
 long_reads:
  - SRR33704642
+cmsearch:
+  enabled: false
+trnascan:
+  enabled: false

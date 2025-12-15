@@ -27,8 +27,8 @@ workflow chainer_wnode {
             if (input_sorting.contains("merge_only")) {
                 align_sort_params = "-merge"
             }
-            align_sort_params += " -ifmt seq-align -compression none -k subject,subject_start,-subject_end "
-            // print(align_sort_params)
+            align_sort_params += " -ifmt seq-align -compression none -k 'subject,subject_start,-subject_end' -rnaseq-uniq -strip-alignment "
+            // print(align_sort_params).
             sort_aligns = run_align_sort([], [], alignments, align_sort_params).collect()
             //sort_aligns = align_sort(alignments, align_sort_params)
         }
@@ -112,14 +112,15 @@ process run_chainer {
     extension="\${filename##*.}"
     (( start_job_id = ((10#\$extension) * $lines_per_file) + 1 ))
     
+    mkdir -p tmp
     # make the local LDS of the genomic and protein (if present) sequences
-    lds2_indexer -source indexed -db LDS2
+    lds2_indexer -source indexed -db tmp/LDS2
 
-    mkdir -p interim
-    chainer_wnode $params -start-job-id \$start_job_id  -workers 32 -input-jobs ${job} -O interim -nogenbank -lds2 LDS2 -evidence-denylist-manifest evidence_denylist.mft -gap-fill-allowlist-manifest gap_fill_allowlist.mft -param ${hmm_params} -scaffolds-manifest scaffolds.mft -trusted-genes-manifest trusted_genes.mft
+    mkdir -p tmp/interim
+    chainer_wnode $params -start-job-id \$start_job_id  -workers 32 -input-jobs ${job} -O tmp/interim -nogenbank -lds2 tmp/LDS2 -evidence-denylist-manifest evidence_denylist.mft -gap-fill-allowlist-manifest gap_fill_allowlist.mft -param ${hmm_params} -scaffolds-manifest scaffolds.mft -trusted-genes-manifest trusted_genes.mft
     mkdir -p output
-    cat interim/* > output/chainer_wnode.${task.index}.gpx-job.asnb
-    rm -rf interim
+    cat tmp/interim/* > output/chainer_wnode.${task.index}.gpx-job.asnb
+    rm -rf tmp
     """
 
     stub:

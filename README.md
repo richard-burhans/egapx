@@ -2,23 +2,20 @@
 
 EGAPx is the publicly accessible version of the updated NCBI [Eukaryotic Genome Annotation Pipeline](https://www.ncbi.nlm.nih.gov/refseq/annotation_euk/process/). 
 
-EGAPx takes an assembly FASTA file, a taxid of the organism, and RNA-seq data. Based on the taxid, EGAPx will pick protein sets and HMM models. The pipeline runs `miniprot` to align protein sequences, `STAR` to align short RNA-seq reads, and `minimap2` to align long RNA-seq reads to the assembly. Protein alignments and RNA-seq read alignments are then passed to `Gnomon` for gene prediction. In the first step of `Gnomon`, the short alignments are chained together into putative gene models. In the second step, these predictions are further supplemented by _ab-initio_ predictions based on HMM models. Functional annotation is added to the final structural annotation set based on the type and quality of the model and orthology information. The final annotation for the input assembly is produced as a `gff` file. 
+EGAPx takes an assembly FASTA file, a taxid of the organism, and RNA-seq data. Based on the taxid, EGAPx will pick protein sets and HMM models. The pipeline runs `miniprot` or `prosplign` to align protein sequences, `STAR` to align short RNA-seq reads, and `minimap2` to align long RNA-seq reads to the assembly. Protein alignments and RNA-seq read alignments are then passed to `Gnomon` for gene prediction. In the first step of `Gnomon`, the short alignments are chained together into putative gene models. In the second step, these predictions are further supplemented by _ab-initio_ predictions based on HMM models. Functional annotation is added to the final structural annotation set based on the type and quality of the model and orthology information. Optionally, noncoding RNAs (tRNAs, rRNAs, snoRNAs and snRNAs) can be predicted using `tRNAscan` and `cmsearch`. The final output includes annotationed features in ASN format which can be used to prepare GenBank annotation [submissions](#submitting-egapx-annotation-to-ncbi) using the included `prepare_submission` script, as well as annotation in GFF3 format for pre-submission analysis and easier modification of predicted features. 
 
 We currently have protein datasets posted that are suitable for most vertebrates, arthropods, echinoderms, and some plants:
   - Chordata - Mammalia, Sauropsida, Actinopterygii (ray-finned fishes), other Vertebrates
   - Insecta - Hymenoptera, Diptera, Lepidoptera, Coleoptera, Hemiptera 
   - Arthropoda - Arachnida, other Arthropoda
   - Echinodermata
+  - Cnidaria
 
   - Monocots - Liliopsida
   - Eudicots - Asterids, Rosids, Fabids, Caryophyllales
   
 
-:warning: Fungi, Protozoans, and most non-arthropod Protostomia are out-of-scope for EGAPx. We recommend using a different annotation method for these organisms.
-
-**Warning:**
-The current version is an early release and still under active development to add features and refine outputs. The workflow for GenBank submission is still under development. Please open a GitHub [Issue](https://github.com/ncbi/egapx/issues) if you encounter any problems with EGAPx. You can also write to cgr@nlm.nih.gov to give us your feedback or if you have any questions.  
-
+:warning: Fungi, protists and nematodes are out-of-scope for EGAPx. We recommend using a different annotation method for these organisms.
 
 **Security Notice:**
 EGAPx has dependencies in and outside of its execution path that include several thousand files from the [NCBI C++ toolkit](https://www.ncbi.nlm.nih.gov/toolkit), and more than a million total lines of code. Static Application Security Testing has shown a small number of verified buffer overrun security vulnerabilities. Users should consult with their organizational security team on risk and if there is concern, consider mitigating options like running via VM or cloud instance. 
@@ -26,14 +23,18 @@ EGAPx has dependencies in and outside of its execution path that include several
 **License:**
 See the EGAPx license [here](https://github.com/ncbi/egapx/blob/main/LICENSE).
 
-# Contents
+![alt text](examples/EGAPx.diagram.png)
+
+# Contents 
 <!-- TOC -->
 
 - [Prerequisites](#prerequisites)
-- [Installation & Setup](#installation-&-setup)
+- [Installation and setup](#installation-and-setup)
 - [Input data format](#input-data-format)
   - [Running EGAPx with short RNA-seq reads](#running-egapx-with-short-rna-seq-reads)
   - [Running EGAPx with short and long RNA-seq reads](#running-egapx-with-short-and-long-rna-seq-reads)
+  - [Protein aligner and protein evidence set selection](#protein-aligner-and-protein-evidence-set-selection)
+  - [Noncoding RNA feature prediction](#noncoding-rna-feature-prediction)
 - [Input example](#input-example)
 - [Run EGAPx](#run-egapx)
 - [Test run](#test-run)
@@ -66,7 +67,7 @@ Notes:
 - General configuration for AWS Batch is described in the Nextflow documentation at https://www.nextflow.io/docs/latest/aws.html
 - See Nextflow installation at https://www.nextflow.io/docs/latest/getstarted.html
 
-## Installation & Setup
+## Installation and setup
 [Back to Top](#Contents)
 
   ```
@@ -90,8 +91,7 @@ Input to EGAPx is in the form of a YAML file.
   taxid: NCBI Taxonomy identifier of the target organism 
   short_reads: RNA-seq short reads data
   ```
-  - :warning: The assembled genome should be screened for contamination prior to running EGAPx. See the NCBI [Foreign Contamination Screen](https://github.com/ncbi/fcs) for a fast, user-friendly contamination screening tool. 
-
+  - See [here](#input-genome) for genome FASTA requirements/recommendations
   - You can obtain taxid from the [NCBI Taxonomy page](https://www.ncbi.nlm.nih.gov/taxonomy).
 
 - The following are _optional_ metadata configuration parameters:
@@ -100,46 +100,55 @@ Input to EGAPx is in the form of a YAML file.
     locus_tag_prefix: egapxtmp 
   ```
 
+### Input genome
+[Back to Top](#Contents)
+
+- The assembled genome should be in FASTA [format](https://www.ncbi.nlm.nih.gov/genbank/fastaformat/). Sequence titles and some special characters are allowed in the FASTA definition line, but shorter and simpler names are less likely to cause issues.
+- The genome sequence does not need to be repeat-masked prior to annotation. EGAPx performs masking steps as part of the pipeline.
+- :warning: The assembled genome should be screened for contamination prior to running EGAPx. See the NCBI [Foreign Contamination Screen](https://github.com/ncbi/fcs) for a fast, user-friendly contamination screening tool. 
+- We recommend keeping organelle sequences in the genome FASTA to prevent inaccurate read mapping, but EGAPx does not support organelle annotation.
 
 ### Running EGAPx with short RNA-seq reads
+[Back to Top](#Contents)
 
   - RNA-seq short reads data can be supplied in any one of the following ways:
 
     ```
-    short_reads: [ array of paths to reads FASTA or FASTQ files]
+    short_reads: [ nested list of read set names and paths, FASTA or FASTQ files]
     short_reads: path_to_short_reads_list.txt
     short_reads: [ array of SRA run IDs or Study IDs]
     short_reads: SRA Entrez query
     ```
-- If you are using your local reads, then the FASTA/FASTQ files can be provided using the format below. For proper specification of paired-end read files, the filenames must have a shared prefix prior to an underscore character, and the prefix is not shared by any other library:
-   ```
-   short_reads:
-     - path/to/se1_reads.fq      # path to single-end reads
-     - path/to/se2_reads.fq
-     - path/to/pe1_reads_R1.fq   # path to paired-end R1 reads
-     - path/to/pe1_reads_R2.fq   # path to paired-end R2 reads
-     - path/to/pe2_reads_R1.fq
-     - path/to/pe2_reads_R2.fq
-   ```
-    
-    Alternatively, you can explicitly set the names and paths to reads sets by following the format below. Here the filenames for the reads can be anything, but the set names for each set has to be unique. 
+- If you are using local reads, the recommended input formatting is a nested list of read set names and paths or a list of read set names and paths in a separate file. For smaller RNA-seq datasets, you can follow the nested list format below. Here the filenames for the reads can be anything, but the set names for each set has to be unique. 
     ```
     short_reads:
      - - single_end_library_name1   # set name
-       - - path/to/se1_reads.fq     # file name for single-end reads
+       - - path/to/se1_reads.fq     # file for single-end reads
      - - single_end_library_name2
        - - path/to/se2_reads.fq
      - - paired_end_library_name1   # set name  
-       - - path/to/pe1_reads_R1.fq  # file name for paired-end R1 reads
-         - path/to/pe1_reads_R2.fq  # file name for paied-end R2 reads
+       - - path/to/pe1_reads_R1.fq  # file for paired-end R1 reads
+         - path/to/pe1_reads_R2.fq  # file for paired-end R2 reads
      - - paired_end_library_name2
        - - path/to/pe2_reads_R1.fq
          - path/to/pe2_reads_R2.fq
     ```
     
-- If you have a large number of local RNA-seq data, you can list them in a file with a set name and a filepath in each line (see `examples/input_D_farinae_small_reads.txt`). Then you can read that file from the input yaml (see `examples/input_D_farinae_small_readlist.yaml`). 
-     
-- To specify an array of NCBI SRA datasets:
+- For a large number of local RNA-seq runs, you can list them in a file with a set name and a filepath in each line:
+    ```
+    seset1 path/to/se1_reads_R1.fq # file for single-end reads
+    peset1 path/to/pe1_reads_R1.fq # file for paired-end R1 reads
+    peset1 path/to/pe1_reads_R2.fq # file for paired-end R2 reads
+    peset2 path/to/pe2_reads_R1.fq
+    peset2 path/to/pe2_reads_R2.fq
+    ```
+    Then you can read that file from the input yaml
+    ```
+    short_reads: path/to/reads.txt
+    ```
+    See `examples/input_D_farinae_small_reads.txt`) and `examples/input_D_farinae_small_readlist.yaml` for an example using this strategy.
+
+- NCBI SRA datasets can be specified as an array:
    ```
    short_reads:
      - SRR8506572
@@ -149,13 +158,15 @@ Input to EGAPx is in the form of a YAML file.
 
 - To specify an SRA entrez query:
     ```
-    short_reads: txid43150[Organism] AND 75:350[ReadLength] AND illumina[Platform] AND biomol_rna[Properties]
+    short_reads: txid43150[Organism] AND 50:350[ReadLength] AND (illumina[Platform] OR bgiseq[Platform]) AND biomol_rna[Properties]
     ```
 
   **Note:** Some SRA entrez query can return a large number of SRA run id's. To prevent EGAPx from using a large number of SRA runs, please run the query first at the [NCBI SRA page](https://www.ncbi.nlm.nih.gov/sra). If there are too many SRA runs, then select a few of them and list it in the input yaml.
 
 
 ### Running EGAPx with short and long RNA-seq reads
+[Back to Top](#Contents)
+
 - Optionally, you can also include long reads RNA-seq data from SRA or local files (FASTA or FASTQ, not BAM) using the same formatting structure for short reads, using the label `long_reads:`
 
   ```
@@ -168,10 +179,54 @@ Input to EGAPx is in the form of a YAML file.
 
 - To specify an SRA entrez query:
     ```
-    short_reads: txid43150[Organism] AND 75:350[ReadLength] AND illumina[Platform] AND biomol_rna[Properties]
+    short_reads: txid43150[Organism] AND 50:350[ReadLength] AND (illumina[Platform] OR bgiseq[Platform]) AND biomol_rna[Properties]
     long_reads: txid43150[Organism] AND (oxford_nanopore[Platform] OR pacbio_smrt[Platform]) AND biomol_rna[Properties]
     ```
 - We have not rigorously tested EGAPx performance using clustered vs. non-clustered IsoSeq reads. EGAPx uses read depth for filtering and removing rare isoforms with limited support, but clustered reads will reduce compute cost.
+
+### Protein aligner and protein evidence set selection
+[Back to Top](#Contents)
+
+By default, EGAPx uses `miniprot` to align protein sets to the genome. Optionally, the user can specify the `prosplign` aligner. From internal testing, `prosplign` has resulted in slight increases in annotation accuracy but is computationally more expensive. `prosplign` may be particularly useful in cases where there is little to no RNAseq evidence available. 
+
+- To specify the `prosplign` aligner:
+    ```
+    protein_aligner_name: prosplign
+    ```
+- To specify the number of protein sets retrieved and aligned (defaults `miniprot : 10`; `prosplign : 5`):
+    ```
+    proteins_best_n_orgs: 10
+    ```
+- To add custom protein sets to target set:
+    ```
+    additional_proteins: proteins.fa
+    ```
+- To exclude specific taxids from target set:
+    ```
+    proteins_deny_taxids: 7227, 7240
+    ```
+    OR
+    ```
+    proteins_deny_taxids:
+      - 7227
+      - 7240
+    ```
+
+### Noncoding RNA feature prediction
+[Back to Top](#Contents)
+
+By default, EGAPx predicts ribosomal RNAs using the [Rfam](https://rfam.org/) database. Optionally, you can enable prediction of other types of noncoding RNA features.
+
+- To enable prediction of tRNA features using [tRNAscan](https://github.com/UCSC-LoweLab/tRNAscan-SE):
+    ```
+    trnascan:
+      enabled: true
+    ```
+- To enable prediction of rRNAs, snoRNAs and snRNAs by searching the [RFAM](https://rfam.org/) database using cmsearch distributed in [Infernal](https://github.com/EddyRivasLab/infernal):
+    ```
+    cmsearch:
+      enabled: true
+    ```
 
 ## Input example
 [Back to Top](#Contents)
@@ -200,8 +255,9 @@ Input to EGAPx is in the form of a YAML file.
   python3 ui/egapx.py ./examples/input_D_farinae_small.yaml -o example_out
   ```
   - This will create a ./egapx_config directory containing the template config files.  
-  - You'll need to edit these templates to suit your specific environment:
-    - For AWS Batch execution, set up AWS Batch Service following advice in the AWS link above. Then edit the value for `process.queue` in `./egapx_config/aws.config` file.
+  - :warning: You'll need to edit these templates to suit your specific environment:
+    - For AWS Batch execution, set up AWS Batch Service following the process [here](https://www.nextflow.io/docs/latest/aws.html). Then edit the value for `process.queue` in `./egapx_config/aws.config` file.
+    - Some executors, e.g. `-e docker` and `-e singularity` default to running on a single node
     - For execution on the local machine you don't need to adjust anything.
 
 
@@ -220,85 +276,21 @@ Input to EGAPx is in the form of a YAML file.
         - Note that for this option, you have to edit `./egapx_config/slurm.config` according to your cluster specifications.
     - type `python3 ui/egapx.py  -h ` for the help menu 
 
+
      
 
 
 ## Test run
 [Back to Top](#Contents)
 
+A successful EGAPx run will produce a completion message and basic feature [statistics](#interpreting-output):
 ```
 $ python3 ui/egapx.py examples/input_D_farinae_small.yaml -e aws -o example_out -w s3://temp_datapath/D_farinae
 
-!!WARNING!!
-This is an alpha release with limited features and organism scope to collect initial feedback on execution. Outputs are not yet complete and not intended for production use.
-
-N E X T F L O W  ~  version 23.10.1
-Launching `/../home/user/egapx/ui/../nf/ui.nf` [golden_mercator] DSL2 - revision: c134f40af5
-in egapx block
-executor >  awsbatch (83)
-[41/69fb92] process > egapx:setup_genome:get_genome_info                                                                  [100%] 1 of 1 ✔
-[12/af924a] process > egapx:setup_proteins:convert_proteins                                                               [100%] 1 of 1 ✔
-[26/661e33] process > egapx:target_proteins_plane:miniprot:split_proteins                                                 [100%] 1 of 1 ✔
-[86/68836c] process > egapx:target_proteins_plane:miniprot:run_miniprot (1)                                               [100%] 1 of 1 ✔
-[f1/2d07a3] process > egapx:target_proteins_plane:paf2asn:run_paf2asn (1)                                                 [100%] 1 of 1 ✔
-[05/33457c] process > egapx:target_proteins_plane:best_aligned_prot:run_best_aligned_prot                                 [100%] 1 of 1 ✔
-[41/455b4f] process > egapx:target_proteins_plane:align_filter_sa:run_align_filter_sa                                     [100%] 1 of 1 ✔
-[c9/4627b4] process > egapx:target_proteins_plane:align_sort_sa:run_align_sort                                            [100%] 1 of 1 ✔
-[9b/0b248b] process > egapx:rnaseq_short_plane:star_index:build_index                                                     [100%] 1 of 1 ✔
-[79/799e31] process > egapx:rnaseq_short_plane:star:run_star (1)                                                          [100%] 2 of 2 ✔
-[01/af1f68] process > egapx:rnaseq_short_plane:bam_strandedness:rnaseq_divide_by_strandedness                             [100%] 1 of 1 ✔
-[65/4107dc] process > egapx:rnaseq_short_plane:bam_bin_and_sort:calc_assembly_sizes                                       [100%] 1 of 1 ✔
-[5d/c69fbf] process > egapx:rnaseq_short_plane:bam_bin_and_sort:bam_bin (2)                                               [100%] 2 of 2 ✔
-[c1/707e59] process > egapx:rnaseq_short_plane:bam_bin_and_sort:merge_prepare                                             [100%] 1 of 1 ✔
-[e3/bba172] process > egapx:rnaseq_short_plane:bam_bin_and_sort:merge (1)                                                 [100%] 1 of 1 ✔
-[2b/7c7b6a] process > egapx:rnaseq_short_plane:bam2asn:convert (1)                                                        [100%] 1 of 1 ✔
-[23/3a9fba] process > egapx:rnaseq_short_plane:rnaseq_collapse:generate_jobs                                              [100%] 1 of 1 ✔
-[b8/994db8] process > egapx:rnaseq_short_plane:rnaseq_collapse:run_rnaseq_collapse (8)                                    [100%] 9 of 9 ✔
-[da/f769f6] process > egapx:rnaseq_short_plane:rnaseq_collapse:run_gpx_make_outputs                                       [100%] 1 of 1 ✔
-[af/c32ba6] process > egapx:gnomon_plane:chainer:run_align_sort (1)                                                       [100%] 1 of 1 ✔
-[7f/bed27d] process > egapx:gnomon_plane:chainer:generate_jobs                                                            [100%] 1 of 1 ✔
-[4a/cdb342] process > egapx:gnomon_plane:chainer:run_chainer (7)                                                          [100%] 16 of 16 ✔
-[7c/b687bb] process > egapx:gnomon_plane:chainer:run_gpx_make_outputs                                                     [100%] 1 of 1 ✔
-[62/e78572] process > egapx:gnomon_plane:gnomon_wnode:gpx_qsubmit                                                         [100%] 1 of 1 ✔
-[62/8445b3] process > egapx:gnomon_plane:gnomon_wnode:annot (1)                                                           [100%] 10 of 10 ✔
-[57/589794] process > egapx:gnomon_plane:gnomon_wnode:gpx_qdump                                                           [100%] 1 of 1 ✔
-[7b/020592] process > egapx:annot_proc_plane:fetch_swiss_prot_asn                                                         [100%] 1 of 1 ✔
-[70/34b131] process > egapx:annot_proc_plane:get_swiss_prot_ids                                                           [100%] 1 of 1 ✔
-[7d/16a826] process > egapx:annot_proc_plane:prot_gnomon_prepare:prot_gnomon_prepare_p                                    [100%] 1 of 1 ✔
-[a3/a6a568] process > egapx:annot_proc_plane:diamond_worker:run_diamond_egap                                              [100%] 1 of 1 ✔
-[97/e54b4a] process > egapx:annot_proc_plane:best_protein_hits:run_protein_filter_replacement                             [100%] 1 of 1 ✔
-[e3/32a317] process > egapx:annot_proc_plane:gnomon_biotype:run_gnomon_biotype                                            [100%] 1 of 1 ✔
-[89/56953c] process > egapx:annot_proc_plane:annot_builder:annot_builder_main                                             [100%] 1 of 1 ✔
-[7c/28df80] process > egapx:annot_proc_plane:annot_builder:annot_builder_input                                            [100%] 1 of 1 ✔
-[19/781bc2] process > egapx:annot_proc_plane:annot_builder:annot_builder_run                                              [100%] 1 of 1 ✔
-[f5/1140c6] process > egapx:annot_proc_plane:print_fake_lxr_data                                                          [100%] 1 of 1 ✔
-[94/0ee74c] process > egapx:annot_proc_plane:orthology_plane:fetch_ortholog_references                                    [100%] 1 of 1 ✔
-[f3/053877] process > egapx:annot_proc_plane:orthology_plane:setup_ext_genome:get_genome_info                             [100%] 1 of 1 ✔
-[bd/5ededd] process > egapx:annot_proc_plane:orthology_plane:setup_ext_proteins:convert_proteins                          [100%] 1 of 1 ✔
-[7d/fa5f13] process > egapx:annot_proc_plane:orthology_plane:get_prot_ref_ids                                             [100%] 1 of 1 ✔
-[82/8018fb] process > egapx:annot_proc_plane:orthology_plane:extract_products_from_models:run_extract_products_from_mo... [100%] 1 of 1 ✔
-[ce/22bdea] process > egapx:annot_proc_plane:orthology_plane:diamond_orthology:run_diamond_egap                           [100%] 1 of 1 ✔
-[ed/0d0cdd] process > egapx:annot_proc_plane:orthology_plane:find_orthologs:run_find_orthologs                            [100%] 1 of 1 ✔
-[56/48bd29] process > egapx:annot_proc_plane:locus_track:run_locus_track                                                  [100%] 1 of 1 ✔
-[95/4ad706] process > egapx:annot_proc_plane:locus_link:run_locus_link                                                    [100%] 1 of 1 ✔
-[1e/a66cb3] process > egapx:annot_proc_plane:final_asn_markup:final_asn                                                   [100%] 1 of 1 ✔
-[f2/391794] process > egapx:annot_proc_plane:annotwriter:run_annotwriter                                                  [100%] 1 of 1 ✔
-[4e/6fccc1] process > egapx:convert_annotations:run_converter                                                             [100%] 1 of 1 ✔
-[8d/e3225f] process > export                                                                                              [100%] 1 of 1 ✔
-Completed at: 30-Oct-2024 11:46:09
-Duration    : 53m 9s
-CPU hours   : 7.0
-Succeeded   : 83
-
-
-Statistics for example_out/complete.genomic.gff
-CDS          33203
-exon         35007
-gene         8828
-lnc_RNA      566
-mRNA         8407
-pseudogene   6
-transcript   4
+Completed at: 01-Dec-2025 10:50:32
+Duration    : 1h 22m 12s
+CPU hours   : 6.3
+Succeeded   : 134
 ```
 
 ## Offline mode
@@ -311,7 +303,7 @@ If you do not have internet access from your cluster, you can run EGAPx in offli
   ```
   rm egap*sif
   singularity cache clean
-  singularity pull docker://ncbi/egapx:0.4.1-alpha
+  singularity pull docker://ncbi/egapx:0.5.0
   ```
 
 - Clone the repo:
@@ -344,7 +336,7 @@ If you do not have internet access from your cluster, you can run EGAPx in offli
 - Run `egapx.py` first to edit the `biowulf_cluster.config`:
   ```
   ui/egapx.py examples/input_D_farinae_small.yaml -e biowulf_cluster -w dfs_work -o dfs_out -lc ../local_cache
-  echo "process.container = '/path_to_/egapx_0.4.1-alpha.sif'"  >> egapx_config/biowulf_cluster.config
+  echo "process.container = '/path_to_/egapx_0.5.0.sif'"  >> egapx_config/biowulf_cluster.config
   ```
 
 - Run `egapx.py`:
@@ -371,19 +363,19 @@ Look at the output in the out diectory (`example_out`) that was supplied in the 
 | `complete.proteins.faa`| Annotated protein products in FASTA format|
 |*Logs and Miscellaneous Outputs:* |
 | `annotation_data.cmt`| Annotation structured comment file - used for submission to GenBank|
+| `sra_metadata.dat`| metadata file containing information about SRA runs used for the EGAPx run|
+| `GNOMON`| Directory containing Gnomon annotation reports and `contam_rpt.tsv` contamination report|
+| `busco`| Directory containing BUSCO results|
+| `nextflow`| Directory containing Nextflow run reports|
+| `stats`| Directory containing features statistics for the final annotation set|
+| `validated`| Directory containing validation warnings and errors for annotated features - used for submission to GenBank|
+|*Nextflow Logs in* `nextflow` *directory:*|
 | `nextflow.log`| Main Nextflow log that captures all the process information and their work directories|
 | `resume.sh`| Nextflow command for resuming a run from the last successful task|
 | `run.report.html`| Nextflow rendered HTML execution report containing run summary, resource usage, and tasks execution|
 | `run.timeline.html`| Nextflow rendered HTML timeline for all processes executed in the EGAPx pipeline|
 | `run.trace.txt`| Nextflow execution tracing file that contains information about each EGAPx process including runtime and CPU usage|
 | `run_params.yaml`| YAML file containing parameters used for the EGAPx run|
-| `sra_metadata.dat`| metadata file containing information about SRA runs used for the EGAPx run|
-| `GNOMON`| Directory containing Gnomon annotation reports and `contam_rpt.tsv` contamination report|
-| `annot_builder_output`| Directory containing `accept.ftable_annot` intermediate file with accepted annotation models called by Gnomon|
-| `busco`| Directory containing BUSCO results|
-| `nextflow`| Directory containing Nextflow run reports|
-| `stats`| Directory containing features statistics for the final annotation set|
-| `validated`| Directory containing validation warnings and errors for annotated features - used for submission to GenBank|
 
 ## Interpreting Output
 [Back to Top](#Contents)
@@ -472,7 +464,7 @@ Users can review this report to identify longer contigs with a high fraction of 
 
 **Gnomon report** `GNOMON/new.gnomon_report.txt`
 
-This report provides a detailed summary of the evidence supporting each transcript model constructed by Gnomon. Models are constructed by chaining together sets of splice-compatible alignments optimized based on overall coding propensity and expression levels aiming to represent full length transcripts. Each model is typically supported by one or more lines of evidence (proteins, long read RNA-seq, short read RNA-seq), with each line of evidence reported as a separate row per model. Short read RNA-seq is reported as aggregate data per sample when supplying from SRA. Partial protein-coding models may also be supplemented by *ab initio* analysis, which is also reported as a line of evidence. Columns are:
+This report provides a detailed summary of the evidence supporting each transcript model constructed by Gnomon. Models are constructed by chaining together sets of splice-compatible alignments optimized based on overall coding propensity and expression levels aiming to represent full length transcripts. Each model is typically supported by one or more lines of evidence (proteins, long read RNA-seq, short read RNA-seq), with each line of evidence reported as a separate row per model. Short read RNA-seq is reported as aggregate data per sample when supplying reads from SRA. Partial protein-coding models may also be supplemented by *ab initio* analysis, which is also reported as a line of evidence. Columns are:
 
 ```
  1: transcript_id                     final transcript identifier for the model, if retained as a transcript in the final annotation
@@ -586,7 +578,7 @@ You will need:
 - To submit annotation with new assemblies, you will need additional inputs:
   - Source modifiers table file (see `examples/example_source_table.src`)
     - Tab-delimited file containing sequence identifiers, chromosome names, location, topology
-    - Chromosome names follow these [rules](https://www.ncbi.nlm.nih.gov/genbank/genomesubmit/#chr_names)
+    - Chromosome names follow these [rules](https://www.ncbi.nlm.nih.gov/genbank/genomesubmit/#chr_names) (click "see details")
     - Default topology is `linear`, only specify `circular` for organelles
     - Unplaced sequences can be completely omitted from the file
     - Rare cases of unlocalized sequences (not "the" chromosome, but with a chromosome assignment) should be included with the chromosome name in the chromosome column and blank in the location column
@@ -607,30 +599,30 @@ You are ready to run `prepare_submission`. See below for full list of required/o
 | `--bioproject-id`                   | BioProject identifier `PRJNA#` corresponding to the assembly |
 | `--biosample-id`                   | BioSample identifier `SAMN#` corresponding to the assembly. Only necessary if BioProject has multiple locus_tag prefixes |
 | `--locus-tag-prefix`                   | locus_tag prefix |
-| `--src-file`                      | table2asn `-src-file` arg. https://www.ncbi.nlm.nih.gov/WebSub/html/help/genbank-source-table.html |
-| `--assembly-data-structured-comment-file`   | table2asn `-w` arg, prepared from https://submit.ncbi.nlm.nih.gov/structcomment/genomes/ |
-| `--linkage-evidence`              | table2asn `-l` arg (default: paired-ends). https://www.ncbi.nlm.nih.gov/genbank/wgs_gapped/ |
+| `--src-file`                      | table2asn `-src-file` argument. https://www.ncbi.nlm.nih.gov/WebSub/html/help/genbank-source-table.html |
+| `--assembly-data-structured-comment-file`   | table2asn `-w` argument, prepared from https://submit.ncbi.nlm.nih.gov/structcomment/genomes/ |
+| `--linkage-evidence`              | table2asn `-l` argument (default: paired-ends). https://www.ncbi.nlm.nih.gov/genbank/wgs_gapped/ |
 | `--out-dir`                   | output directory |
 | *Optional*| 
-| `--submission-comment`                   | table2asn `-y` arg https://www.ncbi.nlm.nih.gov/genbank/table2asn/ |
+| `--submission-comment`                   | table2asn `-y` argument https://www.ncbi.nlm.nih.gov/genbank/table2asn/ |
 | `--name-cleanup-rules-file`                   | Two-column TSV of search/replace regexes to be applied to product and gene names |
-| `--source-quals`                   | table2asn `-j` arg. https://www.ncbi.nlm.nih.gov/genbank/mods_fastadefline/ |
-| `--unknown-gap-len`                   | table2asn `-gaps-unknown` arg. The exact number of consecutive Ns recognized as a gap with unknown length. (default: 100) |
+| `--source-quals`                   | table2asn `-j` argument. https://www.ncbi.nlm.nih.gov/genbank/mods_fastadefline/ |
+| `--unknown-gap-len`                   | table2asn `-gaps-unknown` argument. The exact number of consecutive Ns recognized as a gap with unknown length. (default: 100) |
 
 Command:
 
 ```
 # Using Docker:
-alias prepare_submission='docker run --rm -i --volume="$PWD:$PWD" --workdir="$PWD" ncbi/egapx:0.4.1-alpha prepare_submission'
+alias prepare_submission='docker run --rm -i --volume="$PWD:$PWD" --workdir="$PWD" ncbi/egapx:0.5.0 prepare_submission'
 
 # Using Singularity or Apptainer:
-alias prepare_submission='singularity exec --cleanenv --bind "$PWD:$PWD" --pwd "$PWD" docker://ncbi/egapx:0.4.1-alpha prepare_submission'
+alias prepare_submission='singularity exec --cleanenv --bind "$PWD:$PWD" --pwd "$PWD" docker://ncbi/egapx:0.5.0 prepare_submission'
 
 # Invoke the app:
 prepare_submission --egapx-annotated-genome-asn annotated_genome.asn --submission-template-file template.sbt --bioproject-id PRJNA# --src-file source-table.txt --assembly-data-structured-comment-file genome.asm --linkage-evidence paired-ends --out-dir out
 ```
 
-Note: ensure that all input files are under `$PWD`; otherwise add additional `--volume=` or `--bind` args to mount the additional input directories.
+Note: ensure that all input files are under `$PWD`; otherwise add additional `--volume=` or `--bind` arguments to mount the additional input directories.
 
 ### Submitting annotation for an existing GenBank assembly
 
@@ -641,11 +633,11 @@ Note: ensure that all input files are under `$PWD`; otherwise add additional `--
 | `--submission-template-file`                   | Annotation submission metadata prepared from https://submit.ncbi.nlm.nih.gov/genbank/template/submission/ |
 | `--bioproject-id`                   | BioProject identifier `PRJNA#` corresponding to the assembly. Optional if `--gc-assembly-id` is specified |
 | `--biosample-id`                   | BioSample identifier `SAMN#` corresponding to the assembly. Only necessary if BioProject has multiple locus_tag prefixes. Optional if `--gc-assembly-id` is specified |
-| `--locus-tag-prefix`                   | locus_tag prefix. Only necessary if cannot be resolved automatically. Optional if `--gc-assembly-id` is specified |
+| `--locus-tag-prefix`                   | locus_tag prefix. Only necessary if locus_tag prefix cannot be resolved automatically. Optional if `--gc-assembly-id` is specified |
 | `--gc-assembly-id`                   | GenBank assembly identifier `GCA_#`  |
 | `--out-dir`                   | output directory |
 | *Optional*| 
-| `--submission-comment`                   | table2asn `-y` arg. https://www.ncbi.nlm.nih.gov/genbank/table2asn/ |
+| `--submission-comment`                   | table2asn `-y` argument. https://www.ncbi.nlm.nih.gov/genbank/table2asn/ |
 | `--name-cleanup-rules-file`                   | Two-column TSV of search/replace regexes to be applied to product and gene names |
 | `--seq-id-mapping-file`                   | Two-column TSV of (submitter-seq-id, gca-acc.ver). Required when annotation is on submitter local seq-ids. Requires `-gc-assembly-id` |
 
@@ -666,13 +658,14 @@ prepare_submission --egapx-annotated-genome-asn annotated_genome.asn --submissio
   - Please follow up with the EGAPx team if there are issues labeled as ERROR/REJECT/FATAL.
 
 - Review discrepancy report: `out_dir/annotated_genome.seq-submit.dr`
-  - Check for any issues labeled as FATAL.
+  - Check for any issues labeled as ERROR/FATAL. Some can safely be ignored
+    - "Error: valid [SEQ_DESCR.BadStrucCommInvalidFieldName] Diploid is not a valid field" is a false positive error.
   - See https://www.ncbi.nlm.nih.gov/genbank/asndisc/#evaluating_the_output for further information.
   - Any issues are unexpected.
   - Please follow up with the EGAPx team if there are issues labeled as FATAL
     (and not in one of the categories that is only considered FATAL for bacteria submissions).
 
-- Submit through the NCBI Genome Submission Portal (https://submit.ncbi.nlm.nih.gov/subs/genome/)
+- Submit through the [NCBI Genome Submission Portal](https://submit.ncbi.nlm.nih.gov/subs/genome/)
   - Include a comment in the portal
     - indicate this is an EGAPx annotation
     - if adding annotation to an existing assembly, include the WGS accession number of the assembly being updated.
@@ -683,9 +676,11 @@ prepare_submission --egapx-annotated-genome-asn annotated_genome.asn --submissio
 [Back to Top](#Contents)
 
 **What genomes can I annotate with EGAPx?**
-EGAPx currently supports annotation tax-ids under Arthropoda(6656), Vertebrata(7742), Magnoliopsida(3398), or Echinodermata(7586) according to [NCBI Taxonomy](https://www.ncbi.nlm.nih.gov/taxonomy). As unsupported taxa have either special gene naming considerations that haven't yet been implemented by EGAPx or are limited by available protein evidence data, EGAPx pipelines will fail when providing an unsupported tax-id. We do not recommend supplying a mock supported tax-id alongside user-supplied proteins and HMM files.
+EGAPx currently supports annotation tax-ids under Arthropoda(6656), Vertebrata(7742), Magnoliopsida(3398), Cnidaria(6073), or Echinodermata(7586) according to [NCBI Taxonomy](https://www.ncbi.nlm.nih.gov/taxonomy). As unsupported taxa have either special gene naming considerations that haven't yet been implemented by EGAPx or are limited by available protein evidence data, EGAPx pipelines will fail when providing an unsupported tax-id. We do not recommend supplying a mock supported tax-id alongside user-supplied proteins and HMM files.
 
 Since contamination in assembled genomes is common, we recommend screening and cleaning with [FCS](https://github.com/ncbi/fcs) prior to running EGAPx. EGAPx will fail with the error `Error: (CException::eUnknown) Too many protein hits to proks` if an excessive number of gene models have prokaryote hits. We have observed some cases where FCS doesn't detect all contaminants deriving from novel prokaryotes; users can inspect suspect sequences in the output file `contam_rpt.tsv` to identify additional contamination.
+
+EGAPx does not support organelle annotation. Since EGAPx is not aware of which sequences are from organelles, it may produce some inaccurate annotation on those sequences in the final GFF3. That annotation should not be used, and that annotation will be deleted by the prepare_submission program for submitting to GenBank.
 
 **How long does EGAPx take to run?**
 Run time depends on the size of genome, amount of RNA-seq data, and availability of compute resources. For example, when running EGAPx using AWS batch with a mix of r6i.2xlarge (8 CPU, 64 GB RAM), r6i.4xlarge (16 CPU, 128 GB RAM), and r6i.8xlarge instances (32 CPU, 256 GB RAM): 
@@ -693,7 +688,7 @@ Run time depends on the size of genome, amount of RNA-seq data, and availability
 * Gallus gallus (chicken) genome size 1.1 Gb with 10 short-read RNA-seq runs (136.5M spots, 36.7G bases) and 10 long-read RNA-seq runs (4.9M spots, 4.1G bases) takes 425 CPU hrs and 5.5 wallclock hrs
 
 **What proteins data should I use?**
-The default set of target proteins used by EGAPx (i.e. the protein set automatically retrieved based on organism tax-id) is highly recommended. Users wishing to test supplying additional curated proteins should download the relevant set of EGAPx target proteins, add additional proteins, and specify the concatenated proteins file in the EGAPx YAML. To identify which target proteins EGAPx uses for a given tax id, run egapx.py with -n -v and look at the proteins parameter in the generated printout.
+The default set of target proteins used by EGAPx (i.e. the protein set automatically retrieved based on organism tax-id) is highly recommended. Users wishing to test supplying additional curated poteins should test with the `additional_proteins:` [parameter](#protein-aligner-and-protein-evidence-set-selection). To identify which target proteins EGAPx uses for a given tax id, run egapx.py with -n -v and look at the proteins parameter in the generated printout.
 
 **How is the quality of the annotation output noted?**
 The quality of the annotation output for EGAPx is assessed using BUSCO (Benchmarking Universal Single-Copy Orthologs) scoring. BUSCO evaluates genome completeness by comparing the annotated gene set against conserved orthologous groups. A high BUSCO score indicates a well-annotated genome with minimal missing or fragmented genes, while a lower score suggests potential gaps or inaccuracies in the annotation process. Low BUSCO scores may also occur in organisms that are divergent from the set of organisms used to construct the BUSCO models.
@@ -703,7 +698,7 @@ The results between EGAP and EGAPx are largely similar, with minor expected diff
 * Annotation Differences: EGAPx may have slight variations in annotation, but the goal is to achieve equivalence with EGAP
 * Curation: Manual curation by RefSeq staff applies only to EGAP annotations
 * BUSCO Completeness: The difference in BUSCO complete scores is within 0.5%
-* Gene Matching: Around 75-80% of genes have 1+ matching CDS
+* Gene Matching: Around 75-80% of genes have 1+ matching coding DNA sequence (CDS)
 * Structural Differences: There are slight variations in small introns and start sites
 * Methodological Differences: Differences arise due to the RNA-seq volume used and the alignment methods (ProSplign in EGAP vs. Miniprot in EGAPx)
 
@@ -734,7 +729,11 @@ Li H. Protein-to-genome alignment with miniprot. Bioinformatics. 2023 Jan 1;39(1
 
 Shen W, Le S, Li Y, Hu F. SeqKit: A Cross-Platform and Ultrafast Toolkit for FASTA/Q File Manipulation. PLoS One. 2016 Oct 5;11(10):e0163962. doi: 10.1371/journal.pone.0163962. PMID: 27706213; PMCID: PMC5051824.
 
+Chan PP, Lin BY, Mak AJ, Lowe TM. tRNAscan-SE 2.0: improved detection and functional classification of transfer RNA genes. Nucleic Acids Res. 2021 Sep 20;49(16):9077-9096. doi: 10.1093/nar/gkab688. PMID: 34417604; PMCID: PMC8450103.
 
+Griffiths-Jones S, Bateman A, Marshall M, Khanna A, Eddy SR. Rfam: an RNA family database. Nucl Acids Res. 2003 Jan 1;31(1):439-41. doi: 10.1093/nar/gkg006. PMID: 12520045; PMCID: PMC165453.
+
+Nawrocki EP, Eddy SR. Infernal 1.1: 100-fold faster RNA homology searches. Bioinformatics. 2013 Nov 15;29(22):2933-5. doi: 10.1093/bioinformatics/btt509. PMID: 24008419 PMCID: PMC3810854.
 
 ## Contact us
 

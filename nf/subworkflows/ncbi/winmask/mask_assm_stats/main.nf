@@ -31,9 +31,10 @@ process run_mask_assm_stats{
     mkdir -p output
     echo $winmask > winmask_data.mft
     echo $mask_data > rmask_data.mft
-        mkdir -p ./asncache/
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids spids -split-sequences
-    mask_assm_stats -assembly $gencoll_asn -nogenbank -rmask-output rmask_data.mft -winmask-output winmask_data.mft -output output/mask_assm_stats.xml -asn-cache ./asncache/
+    mkdir -p tmp/asncache/
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${genome_asnb} -oseq-ids spids -split-sequences
+    mask_assm_stats -assembly $gencoll_asn -nogenbank -rmask-output rmask_data.mft -winmask-output winmask_data.mft -output output/mask_assm_stats.xml -asn-cache tmp/asncache/
+    rm -rf tmp
     """
     stub:
     """

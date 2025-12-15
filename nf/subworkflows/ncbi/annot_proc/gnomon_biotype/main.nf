@@ -13,10 +13,11 @@ workflow gnomon_biotype {
         lds2_source
         raw_blastp_hits
         name_cleanup_rules_file
+        lineage_taxids
         parameters  // Map : extra parameter and parameter update
     main:
         def effective_params = merge_params("", parameters, 'gnomon_biotype')
-        run_gnomon_biotype(models_files, splices_files, denylist, gencoll_asn, swiss_prot_asn,  lds2_source, raw_blastp_hits, name_cleanup_rules_file, effective_params)
+        run_gnomon_biotype(models_files, splices_files, denylist, gencoll_asn, swiss_prot_asn,  lds2_source, raw_blastp_hits, name_cleanup_rules_file, lineage_taxids, effective_params)
     emit:
         biotypes = run_gnomon_biotype.out.biotypes
         prots_rpt = run_gnomon_biotype.out.prots_rpt
@@ -35,6 +36,7 @@ process run_gnomon_biotype {
         path lds2_source, stageAs: 'genome/*'
         path raw_blastp_hits
         path name_cleanup_rules_file, stageAs:'name_cleanup_rules_file.txt'
+        val  lineage_taxids
         val  parameters
     output:
         path ('output/biotypes.tsv'), emit: 'biotypes'
@@ -44,20 +46,24 @@ process run_gnomon_biotype {
     script:
     """
     mkdir -p output
-    mkdir -p ./asncache/
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i $swiss_prot_asn -oseq-ids spids -split-sequences
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i $models_files -oseq-ids gnids -split-sequences
-    lds2_indexer -source genome/ -db LDS2
+    mkdir -p tmp/asncache/
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i $swiss_prot_asn -oseq-ids spids -split-sequences
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i $models_files -oseq-ids gnids -split-sequences
+    lds2_indexer -source genome/ -db tmp/LDS2
     echo "${raw_blastp_hits.join('\\n')}" > raw_blastp_hits.mft
-    merge_blastp_hits -asn-cache ./asncache/ -nogenbank -lds2 LDS2 -input-manifest raw_blastp_hits.mft -o prot_hits.asn
+    merge_blastp_hits -asn-cache tmp/asncache/ -nogenbank -lds2 tmp/LDS2 -input-manifest raw_blastp_hits.mft -o prot_hits.asn
     echo "${models_files.join('\\n')}" > models.mft
     echo "prot_hits.asn" > prot_hits.mft
     echo "${splices_files.join('\\n')}" > splices.mft
-    export effective_params=$parameters
+    effective_params="$parameters"
+    if [[ ! "\${effective_params}" =~ "-name_cleanup_rules_file" ]]; then
+        effective_params="\${effective_params} -name_cleanup_rules_file name_cleanup_rules_file.txt"
+    fi
     if [ -n "$denylist" ]; then
         effective_params="\${effective_params} -prot_denylist $denylist"
     fi
-    gnomon_biotype -name_cleanup_rules_file $name_cleanup_rules_file \${effective_params} -logfile - -gc $gencoll_asn -asn-cache ./asncache/ -lds2 ./LDS2  -nogenbank -gnomon_models models.mft -o output/biotypes.tsv -o_prots_rpt output/prots_rpt.tsv -o_contam_rpt output/contam_rpt.tsv -prot_hits prot_hits.mft -prot_splices splices.mft -reftrack-server 'NONE' -allow_lt631 true
+    gnomon_biotype -lineage '$lineage_taxids' \${effective_params} -logfile - -gc $gencoll_asn -asn-cache tmp/asncache/ -lds2 tmp/LDS2  -nogenbank -gnomon_models models.mft -o output/biotypes.tsv -o_prots_rpt output/prots_rpt.tsv -o_contam_rpt output/contam_rpt.tsv -prot_hits prot_hits.mft -prot_splices splices.mft -reftrack-server 'NONE' -allow_lt631 true
+    rm -rf tmp
     """
     stub:
     """

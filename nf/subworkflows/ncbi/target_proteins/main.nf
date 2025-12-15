@@ -38,14 +38,14 @@ workflow target_proteins_plane {
             miniprot(unpacked_genome_fasta, unpacked_proteins_fasta, max_intron, task_params.get('miniprot', [:]))
             def miniprot_file = miniprot.out.miniprot_file
             paf2asn(genome_asn, proteins_asn, miniprot_file, task_params.get('paf2asn', [:]))
-            alignments_to_use = paf2asn.out.asn_file.collect()
+            alignments_to_use = paf2asn.out.asn_file.collect(sort: true)
         } 
         else if (aligner_name == "prosplign") {
             tblastn_align(genome_asn, proteins_asn, genome_blastdb, task_params.get('tblastn_align', [:]))
             tblastn_aligns = tblastn_align.out.blast_asn.collect()
             prosplign_prepare(genome_asn, proteins_asn, tblastn_aligns, gencoll_asn, max_intron, task_params.get('prosplign_prepare', [:]))
             prosplign_wnode(genome_asn, proteins_asn, prosplign_prepare.out.compartments_asn, max_intron, task_params.get('prosplign_wnode', [:]))
-            alignments_to_use = prosplign_wnode.out.prosplign_asn.collect()
+            alignments_to_use = prosplign_wnode.out.prosplign_asn.collect(sort: true)
         } else {
             error "Not implemented"
         }

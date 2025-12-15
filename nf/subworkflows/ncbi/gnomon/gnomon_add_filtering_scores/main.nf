@@ -38,22 +38,22 @@ process gnomon_filter_models {
     script:
     """
 
-    mkdir -p ./asncache/
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${models} -oseq-ids spids -split-sequences
-    prime_cache -cache ./asncache/ -ifmt asnb-seq-entry  -i ${swiss_prot_asn} -oseq-ids spids2 -split-sequences
+    mkdir -p tmp/asncache/
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${models} -oseq-ids spids -split-sequences
+    prime_cache -cache tmp/asncache/ -ifmt asnb-seq-entry  -i ${swiss_prot_asn} -oseq-ids spids2 -split-sequences
 
     echo "${gnomon_filtering_scores_file.join('\n')}" > scores.mft
     echo "${naming_db_secondary_support.join('\n')}" > naming_db_secondary_support.mft
     echo "${search_set_secondary_support.join('\n')}" > search_set_secondary_support.mft
     echo "${best_naming_hits.join('\n')}" > best_naming_hits.mft
     
-    gnomon_filter_models -models $models -nogenbank $params -quality $gnomon_quality_report -asn-cache ./asncache/  -o scored.models.asn \
+    gnomon_filter_models -models $models -nogenbank $params -quality $gnomon_quality_report -asn-cache tmp/asncache/  -o scored.models.asn \
             -scores-manifest scores.mft -prot-naming-hits best_naming_hits.mft  \
             -search-set-secondary-support search_set_secondary_support.mft -naming-db-secondary-support naming_db_secondary_support.mft 
+    rm -rf tmp
     """
     stub:
     """
     touch scored.models.asn
-    
     """
 }

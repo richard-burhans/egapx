@@ -24,8 +24,8 @@ workflow paf2asn {
 process run_paf2asn {
     label 'long_job'
     input:
-        path genome,  stageAs: 'LDS_Index/genome.asnt'
-        path proteins,  stageAs: 'LDS_Index/proteins.asnt'
+        path genome,  stageAs: 'indexed/genome.asnt'
+        path proteins,  stageAs: 'indexed/proteins.asnt'
         path paf_file  // list of PAF files to convert
         val parameters
     output:
@@ -35,11 +35,13 @@ process run_paf2asn {
         //def asn_name = "paf_file.align.asn"    // this could be multiple files (paf_file)
     """
     mkdir -p output
-    lds2_indexer -source LDS_Index
+    mkdir -p tmp
+    lds2_indexer -source indexed -db tmp/lds2_index
     echo "${paf_file.join('\n')}" > input.mft
-    paf2asn ${parameters}  -lds2 LDS_Index/lds2.db  -nogenbank -input-manifest input.mft |
+    paf2asn ${parameters} -lds2 tmp/lds2_index -nogenbank -input-manifest input.mft |
         align_filter -u -nogenbank | # deduplicate - GP-40550
         cat > output/${asn_name}
+    rm -rf tmp
     """
     stub:
         def asn_name = paf_file.baseName.toString() + ".align.asn"    

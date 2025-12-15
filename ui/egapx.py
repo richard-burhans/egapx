@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# requires pip install pyyaml.
+# requires pip install pyyaml
 #
 from errno import ENOENT
 import shlex
@@ -25,11 +25,13 @@ import glob
 import hashlib
 import tarfile
 import urllib.request
+import urllib.error
 
 # Requires pip install pyyaml
 import yaml
 
-software_version = "0.4.1-alpha"
+software_version = "0.5.0"
+DEFAULT_DATA_VERSION = "current_1"
 
 start_time = time.time()
 
@@ -50,7 +52,6 @@ PRIMATE = 9443
 MAMMAL = 40674
 RODENT = 9989
 VERTEBRATE = 7742
-MAGNOLIOPSIDA = 3398
 ANIMALS = 33208   
 ## define gbdiv_inv as has ANIMALS but not VERTEBRATE
 INSECTA = 50557
@@ -60,12 +61,20 @@ LEPIDOSAURS = 8504
 AMPHIBIANS = 8292 
 ECHINODERMATA = 7586
 
+# Reference organisms
+H_SAPIENS = 9606
+M_MUSCULUS = 10090
+D_RERIO = 7955
+D_MELANOGASTER = 7227
+A_THALIANA = 3702
+C_ELEGANS = 6239
+
 BUSCO_DATA_URL = "https://busco-data.ezlab.org/v5/data"
 FTP_EGAP_PROTOCOL = "https"
 FTP_EGAP_SERVER = "ftp.ncbi.nlm.nih.gov"
 FTP_EGAP_ROOT_PATH = "genomes/TOOLS/EGAP/support_data"
 FTP_EGAP_ROOT = f"{FTP_EGAP_PROTOCOL}://{FTP_EGAP_SERVER}/{FTP_EGAP_ROOT_PATH}"
-DATA_VERSION = "current"
+DATA_VERSION = os.environ.get("EGAPX_DATA_VERSION", DEFAULT_DATA_VERSION)
 dataset_taxonomy_url = "https://api.ncbi.nlm.nih.gov/datasets/v2/taxonomy/taxon/"
 SRA_DOWNLOAD_FOLDER = 'sra_dir'
 SRA_RUNS_FILE = 'runs.yaml'
@@ -88,6 +97,7 @@ def parse_args(argv):
     group = parser.add_argument_group('run')
     group.add_argument("filename", nargs='?', help="YAML file with input: section")
     group.add_argument("-o", "--output", help="Output path", default="")
+    parser.add_argument("-dv", "--data-version", help="Set support data version to specific value for run reproduction.", default="")
     parser.add_argument("-e", "--executor", help="Nextflow executor, one of docker, singularity, aws, or local (for NCBI internal use only). Uses corresponding Nextflow config file", default="local")
     parser.add_argument("-c", "--config-dir", help="Directory for executor config files, default is ./egapx_config. Can be also set as env EGAPX_CONFIG_DIR", default="")
     parser.add_argument("-w", "--workdir", help="Working directory for cloud executor", default="")
@@ -214,6 +224,7 @@ class FtpDownloader:
                     ##time.sleep(0.1)
             ## else: . or .. do nothing
 
+
     def list_ftp_dir(self, ftp_path):
         fl = []
         try: 
@@ -230,24 +241,73 @@ class FtpDownloader:
         return rl
 
 
-def download_egapx_ftp_data(cache_dir):
-    manifest_url = f"{FTP_EGAP_ROOT}/{DATA_VERSION}.mft"
-    manifest = urlopen(manifest_url)
-    manifest_path = os.path.join(cache_dir, DATA_VERSION + ".mft")
-    manifest_list = []
+def download_data_manifest(data_version):
+    done = False
+    while not done:
+        done = True # Be optimistic :-)
+        manifest_url = f"{FTP_EGAP_ROOT}/{data_version}.mft"
+        manifest = urlopen(manifest_url)
+        manifest_list = []
+        for line in manifest:
+            line = line.decode("utf-8").strip()
+            if not line or line[0] == '#':
+                continue
+            if line.endswith(".mft"):
+                # Redirect and repeat
+                data_version = line[:-len(".mft")]
+                done = False
+                break
+            manifest_list.append(line)
+    return manifest_list, data_version
+
+
+def read_data_manifest(cache_dir, data_version):
+    done = False
+    err_msg = ""
+    while not done:
+        done = True # Be optimistic :-)
+        manifest_list = []
+        manifest_path = f"{cache_dir}/{data_version}.mft"
+        if os.path.exists(manifest_path):
+            with open(manifest_path, 'rt') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line[0] == '#':
+                        continue
+                    if line.endswith(".mft"):
+                        # Redirect and repeat
+                        data_version = line[:-len(".mft")]
+                        done = False
+                        break
+                    manifest_list.append(line)
+        else:
+            err_msg = f"Data manifest '{manifest_path}' can not be read, please re-download data using -dl -lc {cache_dir}"
+    return manifest_list, data_version, err_msg
+
+
+def write_data_manifest_to_cache(cache_dir, manifest, data_version, effective_data_version):
+    if not cache_dir:
+        return
+    manifest_path = os.path.join(cache_dir, effective_data_version + ".mft")
+    with open(manifest_path, 'wt') as f:
+        for line in manifest:
+            f.write(f"{line}\n")
+    if data_version != effective_data_version:
+        master_manifest_path = os.path.join(cache_dir, data_version + ".mft")
+        with open(master_manifest_path, 'wt') as f:
+            f.write(effective_data_version + ".mft")
+
+
+def download_egapx_ftp_data(cache_dir, data_version):
+    manifest, effective_data_version = download_data_manifest(data_version)
+    if data_version != effective_data_version:
+        print(f"For replicating this run use --data-version {effective_data_version}")
     for line in manifest:
-        line = line.decode("utf-8").strip()
-        if not line or line[0] == '#':
-            continue
-        manifest_list.append(line)
         print(f"Downloading {line}")
         ftpd = FtpDownloader()
         ftpd.connect(FTP_EGAP_SERVER)
         ftpd.download_ftp_dir(f"{FTP_EGAP_ROOT_PATH}/{line}", os.path.join(cache_dir, line))
-    if cache_dir:
-        with open(manifest_path, 'wt') as f:
-            for line in manifest_list:
-                f.write(f"{line}\n")
+    write_data_manifest_to_cache(cache_dir, manifest, data_version, effective_data_version)
     return 0
 
 
@@ -285,7 +345,7 @@ def convert_value(value, key, strict):
 
 
 path_inputs = {'genome', 'hmm', 'softmask', 'reads_metadata', 'short_reads_metadata', 'long_reads_metadata', 'organelles',
-               'proteins', 'proteins_trusted', 'reads', 'short_reads', 'long_reads',
+               'proteins', 'proteins_trusted', 'additional_proteins', 'reads', 'short_reads', 'long_reads',
                'rnaseq_alignments', 'protein_alignments', 'ortho', 'reference_sets', 'prot_denylist',
                'name_cleanup_rules_file', 'gnomon_filtering_scores_file', 'busco_lineage_download',
                'cmsearch'}
@@ -324,7 +384,7 @@ def prepare_reads(run_inputs, force=False, **kw):
     res, msg, sras, nosra = res & res1, msg + msg1, sras + sra1, nosra + nosra1 
 
     sras = list(set(sras))
-    ##print(f'sras 371:   {sras}') 
+    # print(f'sras 387:   {sras}') 
 
     if 'output' in run_inputs and run_inputs['output'] and os.path.exists(run_inputs['output']):    
         outfile_path = Path(run_inputs['output'], 'sra_metadata.dat')
@@ -405,167 +465,226 @@ def is_sra(run_name):
     return re.fullmatch(r'([DES]RR[0-9]+)', run_name) is not None
 
 
-def prepare_reads_by_type(run_inputs, reads_type, reads_type_write=None, **kw):
-    """ Parse input with prefix 'reads_type' and fill out prepared input into the same prefix or
-        into 'reads_type_write' if given. Allows to handle old 'reads' as 'short_reads'.
-        Convert query into SRA run accession list, obtain or create metadata for reads.
+def _pop_reads_input(run_inputs, reads_type):
+    if reads_type not in run_inputs['input']:
+        return False, None
+    reads = run_inputs['input'][reads_type]
+    del run_inputs['input'][reads_type]
+    return True, reads
+
+
+def _parse_reads_table_file(filename):
+    prefixes = defaultdict(list)
+    sra_to_return = []
+    with open(filename) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            mo = re.match(r'([^ \t]+)[ \t]+(.*)', line)
+            if not mo:
+                continue
+            sample = mo.group(1)
+            files_part = mo.group(2).strip()
+            files = files_part.split()
+            prefixes[sample].extend(files)
+    return prefixes, sra_to_return
+
+
+def _handle_query_string(reads_query, reads_type_write, run_inputs, run_filter=None):
+    metadata_map, file_map = sra_query_cached(reads_query, run_filter)
+    if file_map:
+        return True, defaultdict(list, file_map), list(metadata_map.keys()), metadata_map, ''
+    run_inputs['input'][f'{reads_type_write}_query'] = reads_query
+    return False, defaultdict(list), list(metadata_map.keys()), metadata_map, ''
+
+
+def _collect_from_flat_list_entry(rf, prefixes, sra_to_return, msg):
+    if isinstance(rf, str):
+        name = Path(rf).name
+        mo = re.match(r'([^._]+)', name)
+        if mo and mo.group(1) != name:
+            run_name = mo.group(1)
+            if is_sra(run_name):
+                sra_to_return.append(run_name)
+            prefixes[run_name].append(rf)
+            return True, msg
+        elif is_sra(rf):
+            sra_to_return.append(rf)
+            fnames = get_cached_sra_files(rf)
+            if fnames:
+                prefixes[rf].extend(fnames)
+            return True, msg
+        else:
+            msg += f"Invalid read input {rf} - neither a file name nor SRA run name\n"
+            return False, msg
+    msg += f"Invalid read input type for {rf}\n"
+    return False, msg
+
+
+def _infer_sample_id_from_file_list1(file_list):
+    names = [re.match(r'([^.]+)', Path(x).name).group(1) for x in file_list]
+    names.sort()
+    if len(names) == 1:
+        sample_id = names[0]
+    else:
+        limit = min(len(names[0]), len(names[-1]))
+        i = 0
+        while i < limit and names[0][i] == names[-1][i]:
+            i += 1
+        sample_id = names[0][0:i]
+    while sample_id and sample_id[-1] in '._':
+        sample_id = sample_id[:-1]
+    return sample_id
+
+def _infer_sample_id_from_file_list(file_list):
+    # Ensure all elements are strings
+    if not all(isinstance(x, str) for x in file_list):
+        raise ValueError("All entries in file_list must be strings")
+    names = [re.match(r'([^.]+)', Path(x).name).group(1) for x in file_list]
+    names.sort()
+    if len(names) == 1:
+        sample_id = names[0]
+    else:
+        limit = min(len(names[0]), len(names[-1]))
+        i = 0
+        while i < limit and names[0][i] == names[-1][i]:
+            i += 1
+        sample_id = names[0][0:i]
+    while sample_id and sample_id[-1] in '._':
+        sample_id = sample_id[:-1]
+    return sample_id
+
+def _process_list_reads(reads: list, prefixes: defaultdict(list), sra_to_return: list) -> (bool, str):
+    """ Process reads input given as a list
+    :param reads: list of reads entries
+    :param prefixes: map of run_name to list of read files
+    :param sra_to_return: list of SRA run names to return
+    :return: success flag, error message
     """
+    msg = ''
+    for rf in reads:
+        if isinstance(rf, str):
+            ok, msg = _collect_from_flat_list_entry(rf, prefixes, sra_to_return, msg)
+            if not ok:
+                return False, msg
+        elif isinstance(rf, list):
+            if len(rf) == 2 and isinstance(rf[0], str) and isinstance(rf[1], list):
+                run_name, run_files = rf
+                if run_name in prefixes:
+                    msg += f"Run name {run_name} used multiple times\n"
+                    return False, msg
+                for r in run_files:
+                    if not isinstance(r, str):
+                        msg += f"Invalid read input {r}\n"
+                        return False, msg
+                    prefixes[run_name].append(r)
+                if is_sra(run_name):
+                    sra_to_return.append(run_name)
+            else:
+                try:
+                    sample_id = _infer_sample_id_from_file_list(rf)
+                except Exception as e:
+                    msg += f"Invalid read input in file list: {rf} ({e})\n"
+                    return False, msg
+                prefixes[sample_id].extend(rf)
+        else:
+            msg += f"Unsupported reads entry type: {type(rf)}\n"
+            return False, msg
+    return True, msg
+
+
+def _generate_fake_metadata(prefixes: defaultdict(list), sra_metadata_map: dict) -> (list, str):
+    """ Generate minimal SRA metadata for non-SRA read inputs
+    :param prefixes: map of run_name to list of read files
+    :param sra_metadata_map: map of SRA run_name to existing metadata records
+    :return: list of generated metadata records, error message
+    """
+    not_sra = []
+    error_msg = ''
+    for run_name, files in prefixes.items():
+        mos = [re.search(r'([DES]RR[0-9]+)', x) for x in files]
+        srrs = list({mo.group(1) for mo in mos if mo})
+        if len(srrs) > 1:
+            error_msg += f"Error: Run set {run_name} has multiple run ids in read files: {srrs}\n"
+            continue
+        run_name_resolved = srrs[0] if srrs else run_name
+        if is_sra(run_name_resolved):
+            paired = 'paired' if len(files) == 2 else 'unpaired'
+            if run_name_resolved in sra_metadata_map:
+                out_rec = list(sra_metadata_map[run_name_resolved])
+            else:
+                out_rec = [run_name_resolved, 'NA', paired, '2', '2', 'NA', 'NA',
+                           'SAMN_' + run_name_resolved, 'NA', 'NA', 'NA', 'NA', '0']
+            not_sra.append(out_rec)
+    return not_sra, error_msg
+
+
+def _validate_file_counts(prefixes):
+    for run_name, files in prefixes.items():
+        if len(files) > 2:
+            return False, f"More than 2 files for run {run_name}\n"
+    return True, ''
+
+
+def prepare_reads_by_type(run_inputs, reads_type, reads_type_write=None, **kw):
     for_download = kw.get('for_download', False)
-    fake_metadata = not for_download
+    fake_metadata = kw.get('fake_metadata', not for_download)
     res = True
     msg = ''
     sra_metadata_map = {}
-    
-    if reads_type not in run_inputs['input']:
+
+    present, reads = _pop_reads_input(run_inputs, reads_type)
+    if not present:
         return res, msg, [], []
     if reads_type_write is None:
         reads_type_write = reads_type
 
     prefixes = defaultdict(list)
-    sra_to_return = list()
+    sra_to_return = []
     has_files = False
-    reads = run_inputs['input'][reads_type]
-    del run_inputs['input'][reads_type]
-    if type(reads) == str:
-        # 'reads' is a file name or query
+
+    if isinstance(reads, str):
         if os.path.exists(reads):
-            # 'reads' is a file name of a tab delimited file of sample names and read files
-            # e.g. sample_name read1 read2
-            # The file names are either absolute or relative to the current directory
             has_files = True
-            with open(reads) as f:
-                # Parse lines into run name and read file
-                for line in f:
-                    line = line.strip()
-                    if not line or line[0] == '#':
-                        continue
-                    mo = re.match(r'([^ \t]+)[ \t]+(.*)', line)
-                    if mo:
-                        sra_to_return.append(mo.group(2)) # FIXME: sra_to_return is a list of SRA run ids, group(2) is a list of files
-                        prefixes[mo.group(1)].append(mo.group(2))
+            prefixes, sra_to_return = _parse_reads_table_file(reads)
         else:
-            # 'reads' is a query
-            #### metadata
-            # sra_metadata_cached returns a map from run_name to metadata record
-            # and if the query is in the cache non-empty map from run_name to files
-            metadata_map, file_map = sra_query_cached(reads)
-            if file_map:
-                # this query is contained in cached data
-                has_files = True
-                prefixes.update(file_map)
-                sra_metadata_map = metadata_map
-            else:
-                # this query is not in the cached data
-                sra_to_return = list(metadata_map.keys())
-                run_inputs['input'][f'{reads_type_write}_query'] = reads
-                return res, msg, sra_to_return, list()
+            has_files, prefixes, sra_to_return, sra_metadata_map, add_msg = _handle_query_string(
+                reads, reads_type_write, run_inputs
+            )
+            msg += add_msg
+            if not has_files:
+                return res, msg, sra_to_return, []
+    elif isinstance(reads, list):
+        ok, list_msg = _process_list_reads(reads, prefixes, sra_to_return)
+        msg += list_msg
+        if not ok:
+            return False, msg, [], []
+        has_files = any(prefixes.values())
     else:
-        # 'reads' is a list of files or list of lists
-        for rf in reads:
-            if type(rf) == str:
-                # rf is a file or SRA name
-                name = Path(rf).parts[-1]
-                mo = re.match(r'([^._]+)', name)
-                if mo and mo.group(1) != name:
-                    run_name = mo.group(1)
-                    # file name has a prefix separated by '.' or '_', this prefix is the sample name
-                    has_files = True
-                    if is_sra(run_name):
-                        sra_to_return.append(run_name)
-                    prefixes[run_name].append(rf)
-                elif is_sra(rf):
-                    # rf is a SRA name
-                    sra_to_return.append(rf)
-                    fnames = get_cached_sra_files(rf)
-                    if fnames:
-                        has_files = True
-                        prefixes[rf] = fnames
-                else:
-                    msg += f"Invalid read input {rf} - neither a file name nor SRA run name\n"
-                    return False, msg, [], []
-            elif type(rf) == list:
-                has_files = True
-                # find if rf is a tuple already in 'fromFilePairs' format, that is [sample_id, [read1, read2]]
-                if len(rf) == 2 and type(rf[0]) == str and type(rf[1]) == list:
-                    run_name, run_files = rf
-                    # Check that run name not yet used
-                    if run_name in prefixes:
-                        msg += f"Run name {run_name} used multiple times\n"
-                        return False, msg, [], []
-                    if is_sra(run_name):
-                        sra_to_return.append(run_name)
-                    # prefixes[run_name] = list() # prefixes is a defaultdict and does not need it
-                    for r in run_files:
-                        if type(r) != str:
-                            msg += f"Invalid read input {r}\n"
-                            return False, msg, [], []
-                        prefixes[run_name].append(r)
-                else:
-                    # rf is a list of files, we follow star_wnode algorithm to find 'sample_id'
-                    # TODO: replace re.match with split('.') below
-                    names = list(map(lambda x: re.match(r'([^.]+)', Path(x).parts[-1]).group(1), rf))
-                    # Find common prefix
-                    names.sort()
-                    if len(names) == 1:
-                        sample_id = names[0]
-                    else:
-                        for i in range(min(len(names[0]), len(names[-1]))):
-                            if names[0][i] != names[-1][i]:
-                                break
-                        sample_id = names[0][0:i]
-                    # Don't end prefix with . or _
-                    i = len(sample_id) - 1
-                    while i > 0 and sample_id[-1] in "._":
-                        sample_id = sample_id[:-1]
-                        i -= 1
-                    prefixes[sample_id] = rf
-    
-    # Add actual metadata for reads which we got from querying NCBI, or
-    # create fake metadata file for reads containing only one meaningful information piece - pairedness
-    # Have an entry in this file only for SRA runs - files with prefixes SRR, ERR, and DRR and digits
-    # Non-SRA reads are handled by rnaseq_collapse internally
-    not_sra = list()
+        msg += f"Unsupported reads input type: {type(reads)}\n"
+        return False, msg, [], []
+
+    not_sra = []
     if has_files:
-        # run_inputs['input'][f'{reads_type_write}_metadata'] = f.name
-        # Always create metadata file even if it's empty
-        if fake_metadata: 
-            #with tempfile.NamedTemporaryFile(mode='w', delete=False, dir=output, prefix='egapx_reads_metadata_', suffix='.tsv') as f:
-            for run_name, v in prefixes.items():
-                # Check file names in v for matching SRR pattern
-                mos = [ re.search(r'([DES]RR[0-9]+)', x) for x in v ]
-                # Distinct SRRs
-                srrs = list(set([ mo.group(1) for mo in mos if mo ]))
-                if len(srrs) > 1:
-                    print(f"Error: Run set {run_name} has multiple run ids in read files: {srrs}")
-                    sys.exit(1)
-                if srrs:
-                    run_name = srrs[0]
-                if is_sra(run_name):
-                    paired = 'paired' if len(v) == 2 else 'unpaired'
-                    # SRR9005248	NA	paired	2	2	NA	NA	SAMN_SRR9005248	NA	NA	NA	NA	0
-                    if run_name in sra_metadata_map:
-                        out_rec = list(sra_metadata_map[run_name]) 
-                    else:   
-                        out_rec = [run_name, 'NA', paired, '2', '2', 'NA', 'NA', 'SAMN_'+run_name, 'NA', 'NA', 'NA', 'NA', '0']
-                    not_sra.append(out_rec)
-                    # rec = "\t".join(out_rec)
-                    ##f.write(rec + '\n')
-            ##    f.flush()
-            ##    run_inputs['input'][f'{reads_type_write}_metadata'] = f.name
-            for run_name, v in prefixes.items():
-                if len(v) > 2:
-                    res = False
-                    msg += f"More than 2 files for run {run_name}\n"
-                    return res, msg, sra_to_return, not_sra
-            run_inputs['input'][reads_type_write] = [ [k, v] for k, v in prefixes.items() ]
+        if fake_metadata:
+            not_sra, gen_err = _generate_fake_metadata(prefixes, sra_metadata_map)
+            if gen_err:
+                msg += gen_err
+                return False, msg, sra_to_return, not_sra
+        ok, vmsg = _validate_file_counts(prefixes)
+        msg += vmsg
+        if not ok:
+            return False, msg, sra_to_return, not_sra
+        run_inputs['input'][reads_type_write] = [[k, v] for k, v in prefixes.items()]
     elif reads:
-        # print(f"571: for_download {for_download}, reads {reads}")
         if for_download:
             run_inputs['input'][f'{reads_type_write}_query'] = "[Accession] OR ".join(reads) + "[Accession]"
         else:
             run_inputs['input'][f'{reads_type_write}_ids'] = reads
-    
+
     return res, msg, sra_to_return, not_sra
+
 
 def get_symbol_format_class_for_taxid(taxid):
     #print('e:get_symbol_format_class_for_taxid')
@@ -623,6 +742,10 @@ def expand_and_validate_params(run_inputs):
         print(msg)
         return False
     
+    if 'lineage_taxids' not in inputs:
+        lineage = get_lineage(taxid)
+        inputs['lineage_taxids'] = ','.join(map(str,lineage))
+
     if 'symbol_format_class' not in inputs:
         symbol_format_class = get_symbol_format_class_for_taxid(taxid)
         inputs['symbol_format_class'] = symbol_format_class
@@ -640,11 +763,20 @@ def expand_and_validate_params(run_inputs):
     if 'genome' not in inputs:
         print("ERROR: Missing parameter: 'genome'")
         return False
-    
-      
+
     # Check for proteins input and if empty or no input at all, add closest protein bag
     if 'proteins' not in inputs:
-        proteins,trusted = get_closest_protein_bag(taxid)
+        aligner_name = inputs.get('protein_aligner_name', 'miniprot')
+        # Use best N taxons from the best bin for selecting proteins from the set,
+        # depends on the aligner algorithm user and whether it is set explicitly
+        if aligner_name == "prosplign":
+            best_n = 5
+        else:
+            best_n = 10
+        best_n = int(inputs.get('proteins_best_n_orgs', best_n))
+        
+        proteins, trusted, taxid_filter = get_closest_protein_bag(
+            taxid, best_n, set(map(int, inputs.get('proteins_deny_taxids', []))))
         if not proteins:
             # Proteins are not specified explicitly and not found by taxid
             print(f"ERROR: Proteins are not found for tax id {inputs['taxid']}")
@@ -654,6 +786,8 @@ def expand_and_validate_params(run_inputs):
         inputs['proteins'] = proteins
         if trusted:
             inputs['proteins_trusted'] = trusted
+        if taxid_filter:
+            inputs['proteins_filter_taxons'] = taxid_filter
 
     short_read_keys = {'short_reads', 'short_reads_ids', 'short_reads_query',
                        'reads', 'reads_ids', 'reads_query'}
@@ -709,9 +843,12 @@ def expand_and_validate_params(run_inputs):
         inputs['reference_sets'] = get_file_path('reference_sets', 'swissprot.asnb.gz')
         inputs['prot_denylist'] = get_file_path('reference_sets', 'swissprot_organelle_bacteria.gi')
 
-    if 'cmsearch' not in inputs or inputs['cmsearch'] is None:
+    if inputs.get('cmsearch', {}).get('enabled'):
         inputs['cmsearch'] = {'files': [get_file_path('cmsearch', f) for f in "Rfam.seed rfam1410.cm rfam1410_amendments.xml".split()] }
-    assert len(inputs['cmsearch']['files']) == 3
+        inputs['cmsearch']['enabled'] = True
+        assert len(inputs['cmsearch']['files']) == 3
+    else:
+        inputs['cmsearch'] = {'enabled':False}
 
     return True
 
@@ -745,47 +882,39 @@ def get_cache_dir():
 
 
 data_version_cache = {}
-def get_versioned_path(subsystem, filename):
+def load_version_map(data_version):
     """
-    Retrieve the versioned path for a given subsystem and filename.
-
-    Checks the cache for the subsystem version, and if not available,
-    downloads the manifest file to populate the cache. Returns the path
-    including the version if found; otherwise, returns the default path.
+    Load version map from manifest file either from local data directory or from NCBI and cache it.
     """
     global data_version_cache
     cache_dir = get_cache_dir()
-    if not data_version_cache:
-        manifest_path = f"{cache_dir}/{DATA_VERSION}.mft"
-        if cache_dir and os.path.exists(manifest_path):
-            with open(manifest_path, 'rt') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line[0] == '#':
-                        continue
-                    parts = line.split('/')
-                    if len(parts) == 2:
-                        data_version_cache[parts[0]] = parts[1]
-        else:
-            manifest_url = f"{FTP_EGAP_ROOT}/{DATA_VERSION}.mft"
-            manifest = urlopen(manifest_url)
-            manifest_list = []
-            for line in manifest:
-                line = line.decode("utf-8").strip()
-                if not line or line[0] == '#':
-                    continue
-                parts = line.split('/')
-                if len(parts) == 2:
-                    data_version_cache[parts[0]] = parts[1]
-                    manifest_list.append(line)
-            if cache_dir:
-                with open(manifest_path, 'wt') as f:
-                    for line in manifest_list:
-                        f.write(f"{line}\n")
+    if cache_dir:
+        manifest, effective_data_version, err_msg = read_data_manifest(cache_dir, data_version)
+        if err_msg:
+            return effective_data_version, err_msg
+    else:
+        manifest, effective_data_version = download_data_manifest(data_version)
+    for line in manifest:
+        parts = line.split('/')
+        if len(parts) == 2:
+            data_version_cache[parts[0]] = parts[1]
+    return effective_data_version, ''
 
-    if subsystem not in data_version_cache:
+
+def get_version_map():
+    return data_version_cache
+
+
+def get_versioned_path(subsystem, filename) -> str:
+    """
+    Retrieve the versioned path for a given subsystem and filename.
+
+    Returns the path including the version if found; otherwise, returns the default path.
+    """
+    data_version_map = get_version_map()
+    if subsystem not in data_version_map:
         return os.path.join(subsystem, filename)
-    version = data_version_cache[subsystem]
+    version = data_version_map[subsystem]
     return os.path.join(subsystem, version, filename)
 
 
@@ -879,6 +1008,9 @@ def get_lineage_with_ranks(taxid):
     # Fallback to API
     taxon_json_file = urlopen(dataset_taxonomy_url+str(taxid))
     taxon = json.load(taxon_json_file)["taxonomy_nodes"][0]
+    if 'errors' in taxon:
+        lineage_cache[taxid] = [], {}
+        return [], {}
     # print(f"taxid: {taxid}, taxon: {taxon}")
     lineage = taxon["taxonomy"].get("lineage", [])
     lineage.append(taxon["taxonomy"]["tax_id"])
@@ -911,15 +1043,44 @@ def get_tax_name(taxid):
 
 def get_tax_file(subsystem, tax_path):
     vfn = get_versioned_path(subsystem, tax_path)
-    taxids_path = os.path.join(get_cache_dir(), vfn)
+    cache_dir = get_cache_dir()
     taxids_url = f"{FTP_EGAP_ROOT}/{vfn}"
     taxids_file = []
-    if os.path.exists(taxids_path):
-        with open(taxids_path, "rb") as r:
-            taxids_file = r.readlines()
+    if cache_dir:
+        taxids_path = os.path.join(cache_dir, vfn)
+        if os.path.exists(taxids_path):
+            with open(taxids_path, "rb") as r:
+                taxids_file = r.readlines()
+        else:
+            raise FileNotFoundError
     else:
-        taxids_file = urlopen(taxids_url)
+        try:
+            taxids_file = urlopen(taxids_url)
+        except urllib.error.HTTPError as err:
+            raise FileNotFoundError
     return taxids_file
+
+
+def read_versioned_file(subsystem, fname):
+    vfn = get_versioned_path(subsystem, fname)
+    cache_dir = get_cache_dir()
+    taxids_url = f"{FTP_EGAP_ROOT}/{vfn}"
+    contents = ""
+    if cache_dir:
+        file_path = os.path.join(cache_dir, vfn)
+        if os.path.exists(file_path):
+            contents = Path(file_path).read_text(encoding='utf-8', errors='ignore')
+        else:
+            raise FileNotFoundError
+    else:
+        try:
+            response = urllib.request.urlopen(taxids_url)
+            bytes = response.read()
+            encoding = response.headers.get_content_charset() or 'utf-8'
+            contents = bytes.decode(encoding)
+        except urllib.error.HTTPError:
+            raise FileNotFoundError
+    return contents
 
 
 def check_supported_taxid(taxid):
@@ -927,35 +1088,120 @@ def check_supported_taxid(taxid):
         return False, "No taxid provided"
 
     lineage = get_lineage(taxid)
-    reqs = [ARTHROPOD, VERTEBRATE, MAGNOLIOPSIDA, ECHINODERMATA]
+    supported_taxa = yaml.safe_load(read_versioned_file("misc", "supported_taxa.yaml"))
+    names = []
+    reqs = set()
+    for name, taxid in supported_taxa:
+        names.append(f"{name}({taxid})")
+        reqs.add(taxid)
     lineage_check = any(l in lineage for l in reqs)
 
     #print(f'input tax: {taxid} , lineage: {lineage} , contains: { lineage_check } ')
     if lineage_check:
         return True, ''
-    return False, "ERROR: Input taxid not within supported range. Must be under Arthropoda(6656), Vertebrata(7742), Magnoliopsida(3398), or Echinodermata(7586) according to NCBI Taxonomy (https://www.ncbi.nlm.nih.gov/taxonomy)"
+    supported_names = ", ".join(names[:-1]) + ", or " + names[-1]
+    return False, f"ERROR: Input taxid not within supported range. Must be under {supported_names} according to NCBI Taxonomy (https://www.ncbi.nlm.nih.gov/taxonomy)"
 
 
-def get_closest_protein_bag(taxid):
-    if not taxid:
-        return '',''
+def compare_lineages(ln1, ln2):
+    min_common_len = min(len(ln1), len(ln2))
+    for i in range(min_common_len):
+        if ln1[i] != ln2[i]:
+            return i - 1
+    return min_common_len - 1
 
-    taxids_file = get_tax_file("target_proteins", "taxid.list")
-    taxids_list = []
-    for line in taxids_file:
-        line = line.decode("utf-8").strip()
-        if len(line) == 0 or line[0] == '#':
+
+def get_protein_filter(
+    bin_taxid : int,     # taxid of selected bin to filter from 
+    lineage : List[int], # root-first taxid list for main organism
+    best_n : int,        # number of organisms to select from bin, mandatory not counted
+    deny_set : set[int]  # set of taxids not to be included
+) -> List[str]:
+    # print(f"get_protein_filter({bin_taxid}, {lineage}, {best_n}, {deny_set})")
+    # Find best_n organisms in the selected bin
+    org_matches = []
+    # To preserve original order in file for organisms with the same score
+    ordinal = 0
+    max_pos = len(lineage)
+    bin_file = get_tax_file("target_proteins", f"{bin_taxid}.assembly.taxid.list")
+    taxid_name_map = {}
+    layed_out_records = []
+    for line in bin_file:
+        line = line.decode('utf-8').strip()
+        if not line or line[0] == '#':
             continue
         parts = line.split('\t')
-        if len(parts) > 0:
-            t = parts[0]
-            taxids_list.append(int(t))
+        # print(parts)
+        # taxon, name, lineage (semicolon-separated)
+        taxon, name, lineage_str = parts
+        t = int(taxon)
+        if t in deny_set:
+            continue
+        org_lineage = list(map(int, lineage_str.split(';')))
+        org_lineage.append(t)
+        score = max_pos - compare_lineages(lineage, org_lineage)
+        if t == 10090:
+            layed_out_records.append((score, ordinal, t, name))
+        else:
+            org_matches.append((score, ordinal, t, name))
+        taxid_name_map[t] = name
+        ordinal += 1
+    mandatory_taxids = {H_SAPIENS, M_MUSCULUS, D_RERIO, D_MELANOGASTER, A_THALIANA, C_ELEGANS}
+    # To make sure that both H_SAPIENS and M_MUSCULUS are not in the list
+    # we add M_MUSCULUS only if we did not see H_SAPIENS
+    if H_SAPIENS not in taxid_name_map:
+        org_matches += layed_out_records
+    else:
+        # Exclude M_MUSCULUS if H_SAPIENS is present
+        mandatory_taxids -= {M_MUSCULUS}
+    org_matches.sort()
+    # print(f"org_matches: {org_matches}")
+    # Select best_n first entries from the sorted org_matches,
+    # organisms in deny_set were discarded when reading the file.
+    protein_filter_set = { rec[2] for rec in org_matches[:best_n] }
+    # Extend with organisms from org_matches and mandatory_taxids,
+    # excluding 10090 if 9606 is already present
+    mandatory_taxids &= taxid_name_map.keys()
+    protein_filter_set |= mandatory_taxids
+
+    return [taxid_name_map[t] for t in protein_filter_set]
+
+
+def get_closest_protein_bag(taxid, best_n, deny_set={}):
+    """
+    Using taxid as a source find the closest protein bag.
+    In the protein bag find best_n organisms but exclude organisms in deny_set.
+
+    """
+    # print(f"get_closest_protein_bag({taxid}, {best_n}, {deny_set})")
+    no_result = '', '', []
+    if not taxid:
+        return no_result
+
+    new_format_protein_bins = False
+    taxid_list = []
+    taxids_file = get_tax_file("target_proteins", "taxid.list")
+    for line in taxids_file:
+        line = line.decode("utf-8").strip()
+        if not line or line[0] == '#':
+            continue
+        parts = line.split('\t')
+        t = parts[0]
+        taxid_list.append(int(t))
+    # Check for new format
+    try:
+        # Try first file in main taxid.list
+        get_tax_file("target_proteins", f"{taxid_list[0]}.assembly.taxid.list")
+        new_format_protein_bins = True
+    except FileNotFoundError:
+        # Old format
+        new_format_protein_bins = False
 
     lineage = get_lineage(taxid)
 
-    best_taxid = None
+    best_taxid = 0
     best_score = 0
-    for t in taxids_list:
+    for t in taxid_list:
         try:
             pos = lineage.index(t)
         except ValueError:
@@ -965,11 +1211,19 @@ def get_closest_protein_bag(taxid):
             best_taxid = t
 
     if best_score == 0:
-        return '',''
-    # print(best_taxid, best_score)
-    protein_file = get_file_path("target_proteins", f"{best_taxid}.faa.gz")
+        return no_result
+    if new_format_protein_bins and best_n > 0:
+        protein_filter = get_protein_filter(best_taxid, lineage, best_n, deny_set)
+    else:
+        protein_filter = []
+
+    # print(f"protein_filter: {protein_filter}, protein_filter_set: {protein_filter_set}")
+    if new_format_protein_bins:
+        protein_file = get_file_path("target_proteins", f"{best_taxid}.proteins.faa.gz")
+    else:
+        protein_file = get_file_path("target_proteins", f"{best_taxid}.faa.gz")
     trusted_file = get_file_path("target_proteins", f"{best_taxid}.trusted_proteins.gi")
-    return protein_file,trusted_file
+    return protein_file, trusted_file, protein_filter
 
 
 def get_closest_hmm(taxid):
@@ -1010,7 +1264,7 @@ def get_closest_hmm(taxid):
     lineage, ranks = get_lineage_with_ranks(taxid)
 
     is_mammal = MAMMAL in lineage
-    best_lineage = None
+    best_lineage = []
     best_taxid = None
     best_score = 0
     best_good_match = False
@@ -1113,11 +1367,30 @@ def download_busco_lineage_set(cache_dir):
         urllib.request.urlretrieve(busco_list_url, busco_list_file)
 
 
-def download_busco_lineage(lineage, cache_dir):
+def check_busco_lineage(cache_dir, lineage):
     busco_downloads_dir = os.path.join(cache_dir, "busco_downloads")
-    lineage_path = os.path.join(busco_downloads_dir, "lineages", lineage)
-    if os.path.isdir(lineage_path):
+    lineages_path = os.path.join(busco_downloads_dir, "lineages")
+    lineage_path = os.path.join(lineages_path, lineage)
+    if not os.path.isdir(lineage_path) or not os.listdir(lineage_path):
+        return False
+    if not os.path.exists(os.path.join(lineages_path, f"{lineage}.list")):
+        return False
+    for line in open(os.path.join(lineages_path, f"{lineage}.list"), "rt"):
+        line = line.strip()
+        if not line:
+            continue
+        if not os.path.exists(os.path.join(lineages_path, line)):
+            return False
+    return True
+
+
+def download_busco_lineage(cache_dir, lineage):
+    if check_busco_lineage(cache_dir, lineage):
         return
+    busco_downloads_dir = os.path.join(cache_dir, "busco_downloads")
+    lineages_path = os.path.join(busco_downloads_dir, "lineages")
+#    if os.path.isdir(lineage_path) and os.listdir(lineage_path):
+#        return
     lineage_set = get_busco_lineage_set()
     lineage_date = lineage_set.get(lineage)
     if not lineage_date:
@@ -1125,10 +1398,12 @@ def download_busco_lineage(lineage, cache_dir):
     # Download the lineage tar.gz and unpack it
     busco_lineage_url = f"{BUSCO_DATA_URL}/lineages/{lineage}.{lineage_date}.tar.gz"
     busco_lineage_file = os.path.join(busco_downloads_dir, f"{lineage}.tar.gz")
-    os.makedirs(busco_downloads_dir, exist_ok=True)
+    os.makedirs(lineages_path, exist_ok=True)
     urllib.request.urlretrieve(busco_lineage_url, busco_lineage_file)
     with tarfile.open(busco_lineage_file) as tar:
-        tar.extractall(path=os.path.join(busco_downloads_dir, "lineages"))
+        with open(os.path.join(lineages_path, f"{lineage}.list"), "wt") as tar_list:
+            tar_list.write("\n".join(tar.getnames()))
+        tar.extractall(path=lineages_path)
     os.remove(busco_lineage_file)
 
 
@@ -1529,6 +1804,7 @@ def get_sra_metadata(runs):
 
     return metadata_map
 
+
 def sra_query(query, run_filter=None):
     """ sra_ids_query and sra_metadata_query are always used together and intermediate
     results are never used. We combine them here and add an ability to filter by ids in query"""
@@ -1592,6 +1868,14 @@ def find_sra_name(fn):
     return os.path.splitext(os.path.basename(fn))[0].split('_')[0]
 
 
+def check_for_sra_tools():
+    tools = []
+    for tool in ['fasterq-dump', 'fastq-dump']:
+        if shutil.which(tool):
+            tools.append(tool)
+    return tools
+
+
 def download_sra_query(query, sra_dir):
     sra_runs_list, metadata = expand_sra_query(query)
     # print(f"runs: {sra_runs_list}, metadata: {metadata}")
@@ -1653,34 +1937,26 @@ def download_sra_runs(sra_runs_list, sra_dir):
         return 0
     #write the sra_list to be downloaded in file
     Path(sra_dir).mkdir(parents=True, exist_ok=True)
+    tools = check_for_sra_tools()
     for sra in sra_list:
         print(f"Downloading {sra}")
         defline = ">gnl|SRA|$ac.$si.$ri"
         # common arguments for fasterq-dump or fastq-dump
         args = [ sra, '--skip-technical', '--split-files', '-O', sra_dir ]
-        fasterq_args = ['fasterq-dump'] + args + ['--fasta', '--seq-defline', defline, '--threads', '6']
-        fastq_args = ['fastq-dump'] + args + ['--fasta', '0', '--defline-seq', defline]
-        # try:
-        # run fasterq-dump or fastq-dump
-        if shutil.which('fasterq-dump'):
+        args_for_tool = {
+            'fasterq-dump' : ['fasterq-dump'] + args + ['--fasta', '--seq-defline', defline, '--threads', '6'],
+            'fastq-dump' : ['fastq-dump'] + args + ['--fasta', '0', '--defline-seq', defline] 
+        }
+        res = 2 # safeguard if tools is empty
+        for tool in tools:
             try:
-                subprocess.run(fasterq_args, check=True)
-            except subprocess.CalledProcessError:
-                print("Error: fasterq-dump failed")
-                try:
-                    subprocess.run(fastq_args, check=True)
-                except subprocess.CalledProcessError:
-                    print("Error: fastq-dump failed")
-                    return 1
-        elif shutil.which('fastq-dump'):
-            try:
-                subprocess.run(fastq_args, check=True)
-            except subprocess.CalledProcessError:
-                print("Error: fastq-dump failed")
-                return 1
-        else:
-            print("Error: neither fasterq-dump nor fastq-dump is installed")
-            return 1
+                res = 0
+                subprocess.run(args_for_tool[tool], check=True)
+            except subprocess.CalledProcessError as err:
+                print(f"Error: {tool} failed")
+                res = err.returncode
+        if res != 0:
+            return res
     return 0
 
 
@@ -1710,19 +1986,20 @@ def download_offline_data(args):
     if not args.local_cache:
         print("Local cache not set, please use -lc option")
         return 1
+    if args.verbosity >= VERBOSITY_VERBOSE:
+        print(f"Downloading support data to {args.local_cache}")
     sra_dir = os.path.abspath(os.path.join(args.local_cache, SRA_DOWNLOAD_FOLDER))
     if args.dry_run:
-        print(f"Download support data to {args.local_cache}")
         if args.filename:
-            print(f"Download SRA to {sra_dir}")
+            print(f"Downloading SRA")
         return 0
     os.makedirs(args.local_cache, exist_ok=True)
-    download_egapx_ftp_data(args.local_cache)
+    download_egapx_ftp_data(args.local_cache, args.data_version)
     if args.filename:
         run_inputs = repackage_inputs(yaml.safe_load(open(args.filename, 'r')))
         if args.output:
             run_inputs['output'] = args.output
-        print(f"Download SRA to {sra_dir}")
+        print(f"Downloading SRA")
         res, reads_msg = prepare_reads(run_inputs, args.force, for_download=True)
         if not res:
             print('return before downloads')
@@ -1731,16 +2008,31 @@ def download_offline_data(args):
         inputs = run_inputs['input']
         short_reads_query = inputs.get('short_reads_query', '')
         long_reads_query  = inputs.get('long_reads_query', '')
-        download_sra_query(short_reads_query, sra_dir)
-        download_sra_query(long_reads_query, sra_dir)
+        sra_res = 0
+        if check_for_sra_tools():
+            res = download_sra_query(short_reads_query, sra_dir)
+            if res != 0:
+                return res
+            res = download_sra_query(long_reads_query, sra_dir)
+            if res != 0:
+                return res
+        elif short_reads_query or long_reads_query:
+            print("Warning: neither fasterq-dump nor fastq-dump is installed in path")
+            sra_res = 1
         # Download BUSCO lineage
+        # It uses taxonomy information which is loaded by now in previous
+        # stage, so to minimize taxonomy service usage we set cache directory
+        # global variable
+        global user_cache_dir
+        user_cache_dir = args.local_cache
         download_busco_lineage_set(args.local_cache)
         if 'busco_lineage' in inputs:
             busco_lineage = inputs['busco_lineage']
         else:
             busco_lineage = get_busco_lineage(inputs['taxid'])
         print(f"Downloading BUSCO lineage {busco_lineage}")
-        download_busco_lineage(busco_lineage, args.local_cache)
+        download_busco_lineage(args.local_cache, busco_lineage)
+        return sra_res
     return 0
 
 
@@ -1755,18 +2047,19 @@ def main(argv):
         return 0
     verbosity = args.verbosity
 
-    #warn user that this is an alpha release
-    if verbosity > VERBOSITY_QUIET:
-        print("\n!!WARNING!!\nThis is an alpha release with limited features and organism scope to collect initial feedback on execution. Outputs are not yet complete and not intended for production use.\n")
+    # Make sure than args.data_version and global DATA_VERSION are in sync,
+    # preference to explicitely set argument args.data_version
+    if not args.data_version:
+        args.data_version = DATA_VERSION
     
     if args.download_only:
         return download_offline_data(args)
-
+    
     # Command line overrides manifest input
     run_inputs = dict()
     if args.output:
         run_inputs['output'] = args.output
-    
+
     # Separate modes of execution which depend only on output directory
     if not args.dry_run and (not 'output' in run_inputs or not run_inputs['output']):
         print("Output directory not set")
@@ -1777,7 +2070,7 @@ def main(argv):
             print(f"Output directory {run_inputs['output']} does not exist")
             return 1
         return print_statistics(run_inputs['output'])
-    
+
     if args.logs_only:
         if not os.path.exists(run_inputs['output']):
             print(f"Output directory {run_inputs['output']} does not exist")
@@ -1796,6 +2089,14 @@ def main(argv):
             print(f"Local cache directory {args.local_cache} does not exist")
             return 1
         user_cache_dir = args.local_cache
+
+    # Preload data version map
+    effective_data_version, err_msg = load_version_map(args.data_version)
+    if err_msg:
+        print(err_msg)
+        return 1
+    if args.data_version != effective_data_version:
+        print(f"For replicating this run use --data-version {effective_data_version}")
 
     packaged_distro = bool(getattr(sys, '_MEIPASS', ''))
     script_directory = getattr(sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__)))
@@ -1866,12 +2167,12 @@ def main(argv):
     
     cache_dir = get_cache_dir()
     if cache_dir:
-        busco_lineage_file_name = os.path.join(cache_dir, 'busco_downloads', 'lineages', busco_lineage)
-        if os.path.exists(busco_lineage_file_name):
-            inputs['busco_lineage_download'] = busco_lineage_file_name
+        busco_lineage_dir_name = os.path.join(cache_dir, 'busco_downloads', 'lineages', busco_lineage)
+        if check_busco_lineage(cache_dir, busco_lineage):
+            inputs['busco_lineage_download'] = busco_lineage_dir_name
         else:
-            print(f"BUSCO lineage {busco_lineage} not found in {cache_dir}")
-            print(f"Please run egapx.py -lc {cache_dir} -dl {args.filename} to download the lineage")
+            print(f"BUSCO lineage {busco_lineage} not found in {cache_dir} or the data is not valid. Please run")
+            print(f"  egapx.py -lc {cache_dir} -dl {args.filename}\nto download the lineage")
             return 1
 
     # Create output directory if needed
@@ -1894,6 +2195,8 @@ def main(argv):
     # Add to default task parameters, if input file has some task parameters they will override the default
     task_params = merge_params(task_params, run_inputs)
     ##exit(1)
+    task_params['tasks']['cmsearch']['enabled'] = run_inputs['input']['cmsearch']['enabled']
+    task_params['tasks']['trnascan']['enabled'] = run_inputs['input'].get('trnascan',dict()).get('enabled', False)
 
     # Move output from YAML file to arguments to have more transparent Nextflow log
     if 'output' in task_params:
@@ -1936,6 +2239,17 @@ def main(argv):
     nf_cmd += ["-with-trace", f"{nextflow_out_dir}/run.trace.txt"]
     params_file = Path(nextflow_out_dir) / "run_params.yaml"
     nf_cmd += ["-params-file", str(params_file)]
+
+    # GP-40510
+    # Add commit and branch info to the command-line, so we can filter `nextflow log` to find buildruns of interest.
+    in_git_repo = subprocess.run(
+            ['git', 'rev-parse', '--is-inside-work-tree'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        ).returncode == 0
+    if in_git_repo:
+        nf_cmd += ["--git.commit", subprocess.check_output(['git', 'rev-parse',                 'HEAD'], text=True).strip()]
+        nf_cmd += ["--git.branch", subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], text=True).strip()]
 
     # Write params file
     if output:

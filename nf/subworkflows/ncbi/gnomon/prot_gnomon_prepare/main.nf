@@ -41,4 +41,3 @@ process prot_gnomon_prepare_p {
     touch nuc_ids.seq_id
     """
 }
-
