@@ -604,6 +604,7 @@ You are ready to run `prepare_submission`. See below for full list of required/o
 | `--linkage-evidence`              | table2asn `-l` argument (default: paired-ends). https://www.ncbi.nlm.nih.gov/genbank/wgs_gapped/ |
 | `--out-dir`                   | output directory |
 | *Optional*| 
+| `--annotation-provider`                   | Organization submitting the annotation (default: GenBank submitter) |
 | `--submission-comment`                   | table2asn `-y` argument https://www.ncbi.nlm.nih.gov/genbank/table2asn/ |
 | `--name-cleanup-rules-file`                   | Two-column TSV of search/replace regexes to be applied to product and gene names |
 | `--source-quals`                   | table2asn `-j` argument. https://www.ncbi.nlm.nih.gov/genbank/mods_fastadefline/ |
@@ -637,6 +638,7 @@ Note: ensure that all input files are under `$PWD`; otherwise add additional `--
 | `--gc-assembly-id`                   | GenBank assembly identifier `GCA_#`  |
 | `--out-dir`                   | output directory |
 | *Optional*| 
+| `--annotation-provider`                   | Organization submitting the annotation (default: GenBank submitter) |
 | `--submission-comment`                   | table2asn `-y` argument. https://www.ncbi.nlm.nih.gov/genbank/table2asn/ |
 | `--name-cleanup-rules-file`                   | Two-column TSV of search/replace regexes to be applied to product and gene names |
 | `--seq-id-mapping-file`                   | Two-column TSV of (submitter-seq-id, gca-acc.ver). Required when annotation is on submitter local seq-ids. Requires `-gc-assembly-id` |
